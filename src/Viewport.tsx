@@ -1,0 +1,155 @@
+import { useEffect, useRef } from 'react'
+import * as THREE from 'three'
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { BinModel } from './model/types'
+import { buildBin } from './model/geometry'
+
+interface Props {
+  model: BinModel
+  showBuildPlate: boolean
+  fitSignal: number
+  ready: boolean
+}
+
+export default function Viewport({ model, showBuildPlate, fitSignal, ready }: Props) {
+  const mountRef = useRef<HTMLDivElement>(null)
+  const sceneRef = useRef<THREE.Scene>()
+  const cameraRef = useRef<THREE.PerspectiveCamera>()
+  const controlsRef = useRef<OrbitControls>()
+  const rendererRef = useRef<THREE.WebGLRenderer>()
+  const binMeshRef = useRef<THREE.Mesh>()
+  const plateRef = useRef<THREE.Group>()
+
+  // --- One-time scene setup ---
+  useEffect(() => {
+    const mount = mountRef.current!
+    const scene = new THREE.Scene()
+    scene.background = new THREE.Color(0x1a1d23)
+    sceneRef.current = scene
+
+    const camera = new THREE.PerspectiveCamera(
+      45,
+      mount.clientWidth / mount.clientHeight,
+      0.1,
+      5000,
+    )
+    camera.position.set(160, 140, 180)
+    cameraRef.current = camera
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    renderer.setPixelRatio(window.devicePixelRatio)
+    renderer.setSize(mount.clientWidth, mount.clientHeight)
+    mount.appendChild(renderer.domElement)
+    rendererRef.current = renderer
+
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enableDamping = true
+    controls.target.set(0, 15, 0)
+    controlsRef.current = controls
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6))
+    const key = new THREE.DirectionalLight(0xffffff, 1.0)
+    key.position.set(120, 200, 100)
+    scene.add(key)
+    const fill = new THREE.DirectionalLight(0xffffff, 0.4)
+    fill.position.set(-120, 80, -100)
+    scene.add(fill)
+
+    let raf = 0
+    const animate = () => {
+      raf = requestAnimationFrame(animate)
+      controls.update()
+      renderer.render(scene, camera)
+    }
+    animate()
+
+    const onResize = () => {
+      if (!mount) return
+      camera.aspect = mount.clientWidth / mount.clientHeight
+      camera.updateProjectionMatrix()
+      renderer.setSize(mount.clientWidth, mount.clientHeight)
+    }
+    window.addEventListener('resize', onResize)
+    const ro = new ResizeObserver(onResize)
+    ro.observe(mount)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('resize', onResize)
+      ro.disconnect()
+      controls.dispose()
+      renderer.dispose()
+      mount.removeChild(renderer.domElement)
+    }
+  }, [])
+
+  // --- Rebuild the bin mesh whenever the model changes ---
+  // CSG is heavy, so debounce so dragging a slider doesn't rebuild every frame.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene || !ready) return
+
+    const rebuild = () => {
+      if (binMeshRef.current) {
+        scene.remove(binMeshRef.current)
+        binMeshRef.current.geometry.dispose()
+        ;(binMeshRef.current.material as THREE.Material).dispose()
+      }
+      let geometry: THREE.BufferGeometry
+      try {
+        geometry = buildBin(model).geometry
+      } catch (err) {
+        console.error('buildBin failed', err)
+        return
+      }
+      const material = new THREE.MeshStandardMaterial({
+        color: 0x4a9eff,
+        roughness: 0.55,
+        metalness: 0.05,
+        flatShading: false,
+      })
+      const mesh = new THREE.Mesh(geometry, material)
+      scene.add(mesh)
+      binMeshRef.current = mesh
+    }
+
+    const t = setTimeout(rebuild, 80)
+    return () => clearTimeout(t)
+  }, [model, ready])
+
+  // --- Build plate grid ---
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    if (plateRef.current) {
+      scene.remove(plateRef.current)
+      plateRef.current = undefined
+    }
+    if (!showBuildPlate) return
+    const group = new THREE.Group()
+    const size = 600
+    const grid = new THREE.GridHelper(size, size / 42, 0x44546a, 0x2c333f)
+    group.add(grid)
+    scene.add(group)
+    plateRef.current = group
+  }, [showBuildPlate])
+
+  // --- Fit to view ---
+  useEffect(() => {
+    const cam = cameraRef.current
+    const controls = controlsRef.current
+    const mesh = binMeshRef.current
+    if (!cam || !controls || !mesh) return
+    const bbox = new THREE.Box3().setFromObject(mesh)
+    const center = bbox.getCenter(new THREE.Vector3())
+    const sphere = bbox.getBoundingSphere(new THREE.Sphere())
+    const dist = sphere.radius / Math.sin((cam.fov * Math.PI) / 360)
+    const dir = new THREE.Vector3(0.7, 0.6, 0.8).normalize()
+    cam.position.copy(center.clone().add(dir.multiplyScalar(dist * 1.3)))
+    controls.target.copy(center)
+    controls.update()
+  }, [fitSignal])
+
+  return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
+}
