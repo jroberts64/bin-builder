@@ -8,8 +8,34 @@ Parameters:
   BucketName:
     Type: String
     Description: Globally-unique S3 bucket name (e.g. bin-builder-<accountid>).
+  DomainName:
+    Type: String
+    Default: ''
+    Description: >
+      Optional custom domain (e.g. bin-builder.jack-roberts.com). Leave blank to
+      serve only on the default *.cloudfront.net domain.
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: Route53 hosted zone id for DomainName (required if DomainName set).
+
+Conditions:
+  HasDomain: !Not [!Equals [!Ref DomainName, '']]
 
 Resources:
+  # ACM cert for the custom domain. Must be in us-east-1 for CloudFront; this
+  # stack is deployed there. DNS-validated via Route53 records CloudFormation
+  # creates automatically — the stack waits until the cert is issued.
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasDomain
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
   SiteBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -45,6 +71,7 @@ Resources:
         DefaultRootObject: index.html
         PriceClass: PriceClass_100  # NA + EU edges; cheapest tier
         HttpVersion: http2and3
+        Aliases: !If [HasDomain, [!Ref DomainName], !Ref 'AWS::NoValue']
         Origins:
           - Id: S3Origin
             DomainName: !GetAtt SiteBucket.RegionalDomainName
@@ -67,8 +94,38 @@ Resources:
             ResponseCode: 200
             ResponsePagePath: /index.html
             ErrorCachingMinTTL: 10
-        ViewerCertificate:
-          CloudFrontDefaultCertificate: true
+        ViewerCertificate: !If
+          - HasDomain
+          - AcmCertificateArn: !Ref Certificate
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+
+  # Route53 alias records pointing the custom domain at the distribution.
+  # Z2FDTNDATAQYW2 is the fixed CloudFront hosted-zone id for alias targets.
+  DnsRecords:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
+
+  DnsRecordsV6:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
 
   # Allow only this CloudFront distribution to read the bucket.
   BucketPolicy:
@@ -96,5 +153,9 @@ Outputs:
     Description: CloudFront distribution id (for cache invalidation).
     Value: !Ref Distribution
   SiteURL:
-    Description: Public HTTPS URL of the site.
+    Description: Default CloudFront HTTPS URL.
     Value: !Sub 'https://${Distribution.DomainName}'
+  CustomURL:
+    Condition: HasDomain
+    Description: Custom-domain HTTPS URL.
+    Value: !Sub 'https://${DomainName}'

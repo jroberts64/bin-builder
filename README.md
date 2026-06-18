@@ -44,8 +44,9 @@ npm run build    # production build to dist/
 ## Deploy
 
 The app is a static SPA hosted on **AWS S3 + CloudFront** (private bucket, served
-over HTTPS via Origin Access Control). Live at the CloudFront URL output by the
-infra stack.
+over HTTPS via Origin Access Control). Live at
+**https://bin-builder.jack-roberts.com** (and the underlying `*.cloudfront.net`
+URL output by the infra stack).
 
 **Continuous deployment:** every push to `main` triggers
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), which builds and
@@ -76,10 +77,13 @@ Provisioned via CloudFormation in [`deploy/`](deploy/):
 First-time setup:
 
 ```bash
-# Hosting (stack: bin-builder-site)
+# Hosting (stack: bin-builder-site). Omit DomainName/HostedZoneId to serve only
+# on the default *.cloudfront.net URL. With them set, the stack also creates a
+# DNS-validated ACM cert and Route53 alias records for the custom domain.
 aws cloudformation deploy --template-file deploy/static-site.yaml \
   --stack-name bin-builder-site \
   --parameter-overrides BucketName=bin-builder-<accountid> \
+    DomainName=bin-builder.jack-roberts.com HostedZoneId=<zone-id> \
   --profile personal-sso --region us-east-1
 
 # CI deploy role (stack: bin-builder-gha-oidc)
