@@ -1,0 +1,41 @@
+name: Deploy
+
+# Build and deploy the static site to S3 + CloudFront on every push to main.
+# Authenticates to AWS via GitHub OIDC (no stored secrets) by assuming the
+# repo-scoped role created in deploy/github-oidc.yaml.
+
+on:
+  push:
+    branches: [main]
+
+# Required for OIDC: the workflow needs to mint an id-token.
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::019135476568:role/bin-builder-gha-deploy
+          aws-region: us-east-1
+
+      - name: Build & deploy
+        run: ./deploy/deploy.sh
+        # AWS_PROFILE intentionally unset — the assumed role provides creds.
