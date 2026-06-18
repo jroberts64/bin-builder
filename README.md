@@ -41,6 +41,60 @@ npm run dev      # http://localhost:5173
 npm run build    # production build to dist/
 ```
 
+## Deploy
+
+The app is a static SPA hosted on **AWS S3 + CloudFront** (private bucket, served
+over HTTPS via Origin Access Control). Live at the CloudFront URL output by the
+infra stack.
+
+**Continuous deployment:** every push to `main` triggers
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), which builds and
+deploys automatically. It authenticates to AWS with **GitHub OIDC** — a
+short-lived token exchanged for a repo-scoped IAM role, so no AWS keys are stored
+in GitHub.
+
+**Manual deploy** (from a logged-in machine):
+
+```bash
+aws sso login --sso-session personal-sso   # refresh credentials
+AWS_PROFILE=personal-sso ./deploy/deploy.sh # build, sync to S3, invalidate CDN
+```
+
+`deploy.sh` works both locally (set `AWS_PROFILE`) and in CI (uses the assumed
+role's ambient credentials). It reads bucket/distribution ids from the
+CloudFormation stack outputs, so nothing is hard-coded.
+
+### Infrastructure
+
+Provisioned via CloudFormation in [`deploy/`](deploy/):
+
+| Template | Creates |
+|----------|---------|
+| `static-site.yaml` | Private S3 bucket + CloudFront + OAC + SPA routing (403/404 → `index.html`) |
+| `github-oidc.yaml` | GitHub OIDC provider + a least-privilege, repo+branch-scoped deploy role |
+
+First-time setup:
+
+```bash
+# Hosting (stack: bin-builder-site)
+aws cloudformation deploy --template-file deploy/static-site.yaml \
+  --stack-name bin-builder-site \
+  --parameter-overrides BucketName=bin-builder-<accountid> \
+  --profile personal-sso --region us-east-1
+
+# CI deploy role (stack: bin-builder-gha-oidc)
+aws cloudformation deploy --template-file deploy/github-oidc.yaml \
+  --stack-name bin-builder-gha-oidc \
+  --parameter-overrides GitHubOrg=<org> GitHubRepo=<repo> \
+    SiteBucketName=bin-builder-<accountid> CreateOIDCProvider=true \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --profile personal-sso --region us-east-1
+```
+
+Then set the workflow's `role-to-assume` to the `DeployRoleArn` stack output.
+For a second project in the same AWS account, deploy `github-oidc.yaml` with
+`CreateOIDCProvider=false` (the provider is account-wide and exists once).
+
 ## Architecture
 
 | Path | Responsibility |
