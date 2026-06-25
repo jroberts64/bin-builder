@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { BinModel } from './model/types'
 import {
   StoredDesign,
   listDesigns,
@@ -7,19 +6,19 @@ import {
   deleteDesign,
   loadDesign,
 } from './model/storage'
-import { toJSON, fromJSON, buildShareUrl } from './model/serialize'
+import { Design, toJSON, fromJSON, buildShareUrl } from './model/serialize'
 import { downloadBlob } from './model/export'
 
 interface Props {
-  model: BinModel
-  onLoad: (model: BinModel, name?: string) => void
+  design: Design
+  onLoad: (design: Design, name?: string) => void
   onNameChange: (name: string) => void
   currentName: string
 }
 
 // Save / load menu: named designs in localStorage, .json import/export, and a
 // copyable share link. Rendered as a dropdown panel from the header.
-export default function SaveMenu({ model, onLoad, onNameChange, currentName }: Props) {
+export default function SaveMenu({ design, onLoad, onNameChange, currentName }: Props) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState(currentName)
   const [designs, setDesigns] = useState<StoredDesign[]>([])
@@ -51,7 +50,7 @@ export default function SaveMenu({ model, onLoad, onNameChange, currentName }: P
 
   const handleSave = () => {
     const trimmed = name.trim() || 'Untitled'
-    saveDesign(trimmed, model, Date.now())
+    saveDesign(trimmed, design, Date.now())
     setDesigns(listDesigns())
     onNameChange(trimmed) // adopt as the current design name (used by export filenames)
     flash(`Saved "${trimmed}"`)
@@ -60,7 +59,7 @@ export default function SaveMenu({ model, onLoad, onNameChange, currentName }: P
   const handleLoad = (id: string) => {
     const d = loadDesign(id)
     if (d) {
-      onLoad(d.model, d.name)
+      onLoad({ type: d.type, bin: d.bin, box: d.box }, d.name)
       setOpen(false)
       flash(`Loaded "${d.name}"`)
     }
@@ -74,7 +73,7 @@ export default function SaveMenu({ model, onLoad, onNameChange, currentName }: P
 
   const handleExport = () => {
     const fname = (name.trim() || 'design').replace(/[^a-z0-9-_]+/gi, '_')
-    downloadBlob(new Blob([toJSON(model, name.trim())], { type: 'application/json' }), `${fname}.json`)
+    downloadBlob(new Blob([toJSON(design, name.trim())], { type: 'application/json' }), `${fname}.json`)
   }
 
   const handleImportClick = () => fileRef.current?.click()
@@ -84,8 +83,8 @@ export default function SaveMenu({ model, onLoad, onNameChange, currentName }: P
     if (!file) return
     try {
       const text = await file.text()
-      const { model: m, name: n } = fromJSON(text)
-      onLoad(m, n)
+      const { design: d, name: n } = fromJSON(text)
+      onLoad(d, n)
       setOpen(false)
       flash(`Imported "${n ?? file.name}"`)
     } catch {
@@ -95,7 +94,7 @@ export default function SaveMenu({ model, onLoad, onNameChange, currentName }: P
   }
 
   const handleCopyLink = async () => {
-    const url = buildShareUrl(model, name.trim())
+    const url = buildShareUrl(design, name.trim())
     try {
       await navigator.clipboard.writeText(url)
       flash('Share link copied')

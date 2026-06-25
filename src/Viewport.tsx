@@ -1,23 +1,24 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { BinModel } from './model/types'
 import { buildBin } from './model/geometry'
+import { buildBox } from './model/box'
+import { Design } from './model/serialize'
 
 interface Props {
-  model: BinModel
+  design: Design
   showBuildPlate: boolean
   fitSignal: number
   ready: boolean
 }
 
-export default function Viewport({ model, showBuildPlate, fitSignal, ready }: Props) {
+export default function Viewport({ design, showBuildPlate, fitSignal, ready }: Props) {
   const mountRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<THREE.Scene>()
   const cameraRef = useRef<THREE.PerspectiveCamera>()
   const controlsRef = useRef<OrbitControls>()
   const rendererRef = useRef<THREE.WebGLRenderer>()
-  const binMeshRef = useRef<THREE.Mesh>()
+  const partsRef = useRef<THREE.Group>() // holds 1 (bin) or 2 (box+lid) meshes
   const plateRef = useRef<THREE.Group>()
 
   // --- One-time scene setup ---
@@ -84,39 +85,51 @@ export default function Viewport({ model, showBuildPlate, fitSignal, ready }: Pr
     }
   }, [])
 
-  // --- Rebuild the bin mesh whenever the model changes ---
+  // --- Rebuild the part mesh(es) whenever the design changes ---
   // CSG is heavy, so debounce so dragging a slider doesn't rebuild every frame.
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene || !ready) return
 
+    const disposeParts = () => {
+      const g = partsRef.current
+      if (!g) return
+      scene.remove(g)
+      g.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose()
+          ;(o.material as THREE.Material).dispose()
+        }
+      })
+      partsRef.current = undefined
+    }
+
+    const mat = (color: number) =>
+      new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05 })
+
     const rebuild = () => {
-      if (binMeshRef.current) {
-        scene.remove(binMeshRef.current)
-        binMeshRef.current.geometry.dispose()
-        ;(binMeshRef.current.material as THREE.Material).dispose()
-      }
-      let geometry: THREE.BufferGeometry
+      disposeParts()
+      const group = new THREE.Group()
       try {
-        geometry = buildBin(model).geometry
+        if (design.type === 'bin') {
+          group.add(new THREE.Mesh(buildBin(design.bin).geometry, mat(0x4a9eff)))
+        } else {
+          const { box, lid } = buildBox(design.box)
+          group.add(new THREE.Mesh(box, mat(0x4a9eff)))
+          // Lid slightly lighter so it's distinguishable in the assembled view.
+          group.add(new THREE.Mesh(lid, mat(0x8ec5ff)))
+        }
       } catch (err) {
-        console.error('buildBin failed', err)
+        console.error('build failed', err)
         return
       }
-      const material = new THREE.MeshStandardMaterial({
-        color: 0x4a9eff,
-        roughness: 0.55,
-        metalness: 0.05,
-        flatShading: false,
-      })
-      const mesh = new THREE.Mesh(geometry, material)
-      scene.add(mesh)
-      binMeshRef.current = mesh
+      scene.add(group)
+      partsRef.current = group
     }
 
     const t = setTimeout(rebuild, 80)
     return () => clearTimeout(t)
-  }, [model, ready])
+  }, [design, ready])
 
   // --- Build plate grid ---
   useEffect(() => {
@@ -139,9 +152,9 @@ export default function Viewport({ model, showBuildPlate, fitSignal, ready }: Pr
   useEffect(() => {
     const cam = cameraRef.current
     const controls = controlsRef.current
-    const mesh = binMeshRef.current
-    if (!cam || !controls || !mesh) return
-    const bbox = new THREE.Box3().setFromObject(mesh)
+    const parts = partsRef.current
+    if (!cam || !controls || !parts) return
+    const bbox = new THREE.Box3().setFromObject(parts)
     const center = bbox.getCenter(new THREE.Vector3())
     const sphere = bbox.getBoundingSphere(new THREE.Sphere())
     const dist = sphere.radius / Math.sin((cam.fov * Math.PI) / 360)

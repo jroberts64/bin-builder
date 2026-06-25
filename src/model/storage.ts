@@ -1,5 +1,5 @@
-import { BinModel } from './types'
-import { coerceModel, serializeDesign, SavedDesign } from './serialize'
+import { Design } from './serialize'
+import { coerceDesign, serializeDesign, SavedDesign } from './serialize'
 
 // localStorage persistence for named designs plus a separate autosave slot for
 // the in-progress design. All reads are defensive: a corrupt or absent store
@@ -22,13 +22,18 @@ function readAll(): StoredDesign[] {
     if (!Array.isArray(arr)) return []
     return arr
       .filter((d) => d && typeof d.id === 'string')
-      .map((d) => ({
-        id: d.id,
-        name: typeof d.name === 'string' ? d.name : 'Untitled',
-        savedAt: typeof d.savedAt === 'number' ? d.savedAt : 0,
-        v: d.v ?? 1,
-        model: coerceModel(d.model),
-      }))
+      .map((d) => {
+        const design = coerceDesign(d)
+        return {
+          id: d.id,
+          name: typeof d.name === 'string' ? d.name : 'Untitled',
+          savedAt: typeof d.savedAt === 'number' ? d.savedAt : 0,
+          v: d.v ?? 1,
+          type: design.type,
+          bin: design.bin,
+          box: design.box,
+        }
+      })
   } catch {
     return []
   }
@@ -48,13 +53,13 @@ export function listDesigns(): StoredDesign[] {
 
 // Save a design by name. If a design with the same (case-insensitive) name
 // exists, it is overwritten; otherwise a new entry is created. Returns the id.
-export function saveDesign(name: string, model: BinModel, now: number): string {
+export function saveDesign(name: string, design: Design, now: number): string {
   const designs = readAll()
   const trimmed = name.trim() || 'Untitled'
   const existing = designs.find((d) => d.name.toLowerCase() === trimmed.toLowerCase())
   const id = existing?.id ?? `bin-${now}-${Math.floor(now % 100000)}`
   const entry: StoredDesign = {
-    ...serializeDesign(model, trimmed),
+    ...serializeDesign(design, trimmed),
     id,
     name: trimmed,
     savedAt: now,
@@ -76,19 +81,19 @@ export function loadDesign(id: string): StoredDesign | null {
 
 // --- autosave (single slot, last-edited design) ---
 
-export function writeAutosave(model: BinModel): void {
+export function writeAutosave(design: Design): void {
   try {
-    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(serializeDesign(model)))
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(serializeDesign(design)))
   } catch {
     /* ignore */
   }
 }
 
-export function readAutosave(): BinModel | null {
+export function readAutosave(): Design | null {
   try {
     const raw = localStorage.getItem(AUTOSAVE_KEY)
     if (!raw) return null
-    return coerceModel(JSON.parse(raw).model)
+    return coerceDesign(JSON.parse(raw))
   } catch {
     return null
   }

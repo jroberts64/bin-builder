@@ -1,23 +1,57 @@
 import * as THREE from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { BinModel } from './types'
+import { BoxModel } from './box'
 import { buildBin } from './geometry'
+import { buildBox } from './box'
 
-// Bins are modelled Y-up in the viewport (base at Y=0, opening toward +Y);
-// slicers expect Z-up with the opening toward +Z. Rotating +90° about X maps
-// +Y -> +Z (y'=-z, z'=y), keeping the bin upright. (-90° flips it upside down.)
-function exportGeometry(model: BinModel): THREE.BufferGeometry {
-  const { geometry } = buildBin(model)
+// Models are Y-up in the viewport (sitting on Y=0); slicers expect Z-up.
+// Rotating +90° about X maps +Y -> +Z (y'=-z, z'=y), keeping parts upright.
+function toZUp(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   const g = geometry.clone()
-  g.rotateX(Math.PI / 2) // Y-up -> Z-up, opening faces +Z
+  g.rotateX(Math.PI / 2)
   return g
 }
 
-export function exportSTL(model: BinModel): Blob {
-  const geom = exportGeometry(model)
+function geometryToSTL(geom: THREE.BufferGeometry): Blob {
   const mesh = new THREE.Mesh(geom)
   const stl = new STLExporter().parse(mesh, { binary: true }) as unknown as DataView
   return new Blob([stl as unknown as ArrayBuffer], { type: 'model/stl' })
+}
+
+function exportGeometry(model: BinModel): THREE.BufferGeometry {
+  return toZUp(buildBin(model).geometry)
+}
+
+export function exportSTL(model: BinModel): Blob {
+  return geometryToSTL(exportGeometry(model))
+}
+
+// --- Sliding-lid box: box body + lid, both laid out flat and combined into one
+// STL/3MF positioned side by side so they print together. ---------------------
+
+function boxExportGeometry(model: BoxModel): THREE.BufferGeometry {
+  const { box, lid, size } = buildBox(model)
+  // Box prints as-is (open mouth up is fine). Lid: drop it to the plate next to
+  // the box so both sit flat and don't overlap.
+  const boxG = box.clone()
+  const lidG = lid.clone()
+  lidG.computeBoundingBox()
+  const lb = lidG.boundingBox!
+  // Move lid down to y=0 and beside the box along +X with a 10mm gap.
+  lidG.translate(0, -lb.min.y, 0)
+  lidG.translate(size.x / 2 + (lb.max.x - lb.min.x) / 2 + 10, 0, 0)
+  const combined = mergeGeometries([boxG, lidG], false)!
+  return toZUp(combined)
+}
+
+export function exportBoxSTL(model: BoxModel): Blob {
+  return geometryToSTL(boxExportGeometry(model))
+}
+
+export function exportBox3MF(model: BoxModel): Blob {
+  return geometryToBlob3MF(boxExportGeometry(model))
 }
 
 // --- Minimal 3MF writer ---------------------------------------------------
@@ -25,7 +59,10 @@ export function exportSTL(model: BinModel): Blob {
 // the smallest valid package: [Content_Types].xml, _rels/.rels and 3dmodel.model.
 
 export function export3MF(model: BinModel): Blob {
-  const geom = exportGeometry(model)
+  return geometryToBlob3MF(exportGeometry(model))
+}
+
+function geometryToBlob3MF(geom: THREE.BufferGeometry): Blob {
   const pos = geom.getAttribute('position') as THREE.BufferAttribute
 
   const verts: string[] = []

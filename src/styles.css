@@ -55,6 +55,10 @@ html, body, #root {
 .export-group { display: flex; gap: 6px; }
 .export-group .btn { flex: 1; }
 
+/* object-type switch (Bin / Sliding Box) */
+.type-switch { width: 100%; }
+.type-switch button { flex: 1; padding: 7px 10px; font-size: 13px; }
+
 /* ---------- Save / Load menu ---------- */
 .savemenu { position: relative; }
 .savemenu-panel {

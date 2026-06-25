@@ -1,15 +1,35 @@
 import { BinModel, Divider, LipStyle, SocketStyle, defaultBin } from './types'
+import { BoxModel, defaultBox } from './box'
 
-// Versioned (de)serialization for a BinModel. Everything that persists or shares
-// a design — localStorage, .json files, share URLs — goes through here so there
-// is exactly one place that validates untrusted input and handles schema drift.
+// Versioned (de)serialization for a design. Everything that persists or shares —
+// localStorage, .json files, share URLs — goes through here so there is exactly
+// one place that validates untrusted input and handles schema drift.
+//
+// A design is one of two object types: a Gridfinity-style bin, or a sliding-lid
+// box. The envelope carries the type plus the matching model.
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
+
+export type ObjectType = 'bin' | 'box'
+
+// A live design in the app: the active object type plus both models (so toggling
+// type preserves each one's settings).
+export interface Design {
+  type: ObjectType
+  bin: BinModel
+  box: BoxModel
+}
+
+export function defaultDesign(): Design {
+  return { type: 'bin', bin: defaultBin(), box: defaultBox() }
+}
 
 export interface SavedDesign {
   v: number // schema version
   name?: string
-  model: BinModel
+  type: ObjectType
+  bin: BinModel
+  box: BoxModel
 }
 
 const LIPS: LipStyle[] = ['default', 'thin', 'none']
@@ -44,6 +64,20 @@ function coerceDividers(value: unknown): Divider[] {
   return out
 }
 
+// Turn arbitrary parsed JSON into a guaranteed-valid BoxModel.
+export function coerceBox(raw: unknown): BoxModel {
+  const d = defaultBox()
+  const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<BoxModel>
+  return {
+    innerW: num(m.innerW, d.innerW, 10, 400),
+    innerD: num(m.innerD, d.innerD, 10, 400),
+    innerH: num(m.innerH, d.innerH, 5, 300),
+    wall: num(m.wall, d.wall, 1, 6),
+    lidThickness: num(m.lidThickness, d.lidThickness, 1, 6),
+    clearance: num(m.clearance, d.clearance, 0, 1),
+  }
+}
+
 // Turn arbitrary parsed JSON into a guaranteed-valid BinModel. Unknown or
 // out-of-range fields snap to the defaults.
 export function coerceModel(raw: unknown): BinModel {
@@ -70,26 +104,41 @@ export function coerceModel(raw: unknown): BinModel {
   }
 }
 
+// Coerce any parsed JSON into a valid Design. Handles three shapes:
+//   - v2 envelope { type, bin, box }
+//   - v1 envelope { model: <bin> } (legacy save → bin design)
+//   - bare bin model object (oldest/loosest)
+export function coerceDesign(raw: unknown): Design {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  if ('type' in o && (o.type === 'bin' || o.type === 'box')) {
+    return { type: o.type, bin: coerceModel(o.bin), box: coerceBox(o.box) }
+  }
+  if ('model' in o) {
+    return { type: 'bin', bin: coerceModel(o.model), box: defaultBox() }
+  }
+  return { type: 'bin', bin: coerceModel(raw), box: defaultBox() }
+}
+
 // --- public API ---
 
-export function serializeDesign(model: BinModel, name?: string): SavedDesign {
-  return { v: SCHEMA_VERSION, name, model }
+export function serializeDesign(design: Design, name?: string): SavedDesign {
+  return { v: SCHEMA_VERSION, name, type: design.type, bin: design.bin, box: design.box }
 }
 
-// Accepts a SavedDesign envelope OR a bare model object (older/looser inputs).
-export function deserializeDesign(raw: unknown): { model: BinModel; name?: string } {
-  if (raw && typeof raw === 'object' && 'model' in raw) {
-    const env = raw as SavedDesign
-    return { model: coerceModel(env.model), name: env.name }
-  }
-  return { model: coerceModel(raw) }
+// Accepts a SavedDesign envelope OR looser/legacy inputs.
+export function deserializeDesign(raw: unknown): { design: Design; name?: string } {
+  const name =
+    raw && typeof raw === 'object' && typeof (raw as SavedDesign).name === 'string'
+      ? (raw as SavedDesign).name
+      : undefined
+  return { design: coerceDesign(raw), name }
 }
 
-export function toJSON(model: BinModel, name?: string): string {
-  return JSON.stringify(serializeDesign(model, name), null, 2)
+export function toJSON(design: Design, name?: string): string {
+  return JSON.stringify(serializeDesign(design, name), null, 2)
 }
 
-export function fromJSON(text: string): { model: BinModel; name?: string } {
+export function fromJSON(text: string): { design: Design; name?: string } {
   return deserializeDesign(JSON.parse(text))
 }
 
@@ -104,12 +153,12 @@ function base64UrlDecode(s: string): string {
   return decodeURIComponent(escape(atob(b64)))
 }
 
-export function encodeShareParam(model: BinModel, name?: string): string {
+export function encodeShareParam(design: Design, name?: string): string {
   // Minify (no pretty-print) for shorter URLs.
-  return base64UrlEncode(JSON.stringify(serializeDesign(model, name)))
+  return base64UrlEncode(JSON.stringify(serializeDesign(design, name)))
 }
 
-export function decodeShareParam(param: string): { model: BinModel; name?: string } | null {
+export function decodeShareParam(param: string): { design: Design; name?: string } | null {
   try {
     return deserializeDesign(JSON.parse(base64UrlDecode(param)))
   } catch {
@@ -117,14 +166,14 @@ export function decodeShareParam(param: string): { model: BinModel; name?: strin
   }
 }
 
-export function buildShareUrl(model: BinModel, name?: string): string {
+export function buildShareUrl(design: Design, name?: string): string {
   const url = new URL(window.location.href)
-  url.searchParams.set('d', encodeShareParam(model, name))
+  url.searchParams.set('d', encodeShareParam(design, name))
   return url.toString()
 }
 
 // Read a design from the current URL's `d` param, if present.
-export function readShareUrl(): { model: BinModel; name?: string } | null {
+export function readShareUrl(): { design: Design; name?: string } | null {
   const param = new URLSearchParams(window.location.search).get('d')
   return param ? decodeShareParam(param) : null
 }

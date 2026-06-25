@@ -2,21 +2,30 @@ import { useState } from 'react'
 import {
   BinModel,
   Divider,
-  GRIDFINITY,
   LipStyle,
   SocketStyle,
   resolvedSize,
 } from './model/types'
-import { export3MF, exportSTL, downloadBlob } from './model/export'
+import { BoxModel } from './model/box'
+import { Design, ObjectType } from './model/serialize'
+import {
+  export3MF,
+  exportSTL,
+  exportBox3MF,
+  exportBoxSTL,
+  downloadBlob,
+} from './model/export'
 import SaveMenu from './SaveMenu'
 
 interface Props {
-  model: BinModel
-  setModel: (m: BinModel) => void
+  design: Design
+  setBin: (m: BinModel) => void
+  setBox: (m: BoxModel) => void
+  setType: (t: ObjectType) => void
   showBuildPlate: boolean
   setShowBuildPlate: (v: boolean) => void
   ready: boolean
-  onLoad: (model: BinModel, name?: string) => void
+  onLoad: (design: Design, name?: string) => void
   onNameChange: (name: string) => void
   currentName: string
 }
@@ -24,8 +33,10 @@ interface Props {
 let dividerSeq = 0
 
 export default function Sidebar({
-  model,
-  setModel,
+  design,
+  setBin,
+  setBox,
+  setType,
   showBuildPlate,
   setShowBuildPlate,
   ready,
@@ -33,27 +44,25 @@ export default function Sidebar({
   onNameChange,
   currentName,
 }: Props) {
-  const [inches, setInches] = useState(false)
-  const patch = (p: Partial<BinModel>) => setModel({ ...model, ...p })
-  const size = resolvedSize(model)
+  const isBin = design.type === 'bin'
 
-  const fmtLen = (mm: number) =>
-    inches ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`
-
-  // Use the saved design name for export downloads, falling back to "bin".
+  // Use the saved design name for export downloads, falling back to a default.
   const exportFilename = (ext: string) => {
-    const base = currentName.trim().replace(/[^a-z0-9-_]+/gi, '_') || 'bin'
+    const fallback = isBin ? 'bin' : 'box'
+    const base = currentName.trim().replace(/[^a-z0-9-_]+/gi, '_') || fallback
     return `${base}.${ext}`
   }
 
-  const addDivider = (axis: 'x' | 'y') => {
-    const d: Divider = { id: `d${dividerSeq++}`, axis, position: 0.5 }
-    patch({ dividers: [...model.dividers, d] })
-  }
-  const updateDivider = (id: string, p: Partial<Divider>) =>
-    patch({ dividers: model.dividers.map((d) => (d.id === id ? { ...d, ...p } : d)) })
-  const removeDivider = (id: string) =>
-    patch({ dividers: model.dividers.filter((d) => d.id !== id) })
+  const doExportSTL = () =>
+    downloadBlob(
+      isBin ? exportSTL(design.bin) : exportBoxSTL(design.box),
+      exportFilename('stl'),
+    )
+  const doExport3MF = () =>
+    downloadBlob(
+      isBin ? export3MF(design.bin) : exportBox3MF(design.box),
+      exportFilename('3mf'),
+    )
 
   return (
     <aside className="sidebar">
@@ -61,18 +70,29 @@ export default function Sidebar({
         <div className="sidebar-head-top">
           <span className="logo">▦ Bin Builder</span>
           <SaveMenu
-            model={model}
+            design={design}
             onLoad={onLoad}
             onNameChange={onNameChange}
             currentName={currentName}
           />
         </div>
+
+        {/* Object-type switch */}
+        <div className="seg type-switch">
+          <button className={isBin ? 'active' : ''} onClick={() => setType('bin')}>
+            Bin
+          </button>
+          <button className={!isBin ? 'active' : ''} onClick={() => setType('box')}>
+            Sliding Box
+          </button>
+        </div>
+
         <div className="export-group">
           <button
             className="btn primary"
             disabled={!ready}
             title="Download a watertight binary STL, ready to slice."
-            onClick={() => downloadBlob(exportSTL(model), exportFilename('stl'))}
+            onClick={doExportSTL}
           >
             Export STL
           </button>
@@ -80,19 +100,63 @@ export default function Sidebar({
             className="btn"
             disabled={!ready}
             title="Download a watertight 3MF package, ready to slice."
-            onClick={() => downloadBlob(export3MF(model), exportFilename('3mf'))}
+            onClick={doExport3MF}
           >
             Export 3MF
           </button>
         </div>
       </header>
 
-      <Section title="Size" defaultOpen>
-        <Toggle
-          label="Gridfinity"
-          checked={model.gridfinity}
-          onChange={(v) => patch({ gridfinity: v })}
+      {isBin ? (
+        <BinControls
+          model={design.bin}
+          setModel={setBin}
+          showBuildPlate={showBuildPlate}
+          setShowBuildPlate={setShowBuildPlate}
         />
+      ) : (
+        <BoxControls
+          model={design.box}
+          setModel={setBox}
+          showBuildPlate={showBuildPlate}
+          setShowBuildPlate={setShowBuildPlate}
+        />
+      )}
+    </aside>
+  )
+}
+
+// ---------- Bin controls ----------
+
+function BinControls({
+  model,
+  setModel,
+  showBuildPlate,
+  setShowBuildPlate,
+}: {
+  model: BinModel
+  setModel: (m: BinModel) => void
+  showBuildPlate: boolean
+  setShowBuildPlate: (v: boolean) => void
+}) {
+  const [inches, setInches] = useState(false)
+  const patch = (p: Partial<BinModel>) => setModel({ ...model, ...p })
+  const size = resolvedSize(model)
+  const fmtLen = (mm: number) =>
+    inches ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`
+
+  const addDivider = (axis: 'x' | 'y') =>
+    patch({ dividers: [...model.dividers, { id: `d${dividerSeq++}`, axis, position: 0.5 }] })
+  const updateDivider = (id: string, p: Partial<Divider>) =>
+    patch({ dividers: model.dividers.map((d) => (d.id === id ? { ...d, ...p } : d)) })
+  const removeDivider = (id: string) =>
+    patch({ dividers: model.dividers.filter((d) => d.id !== id) })
+
+  return (
+    <>
+      <Section title="Size" defaultOpen>
+        <Toggle label="Gridfinity" checked={model.gridfinity}
+          onChange={(v) => patch({ gridfinity: v })} />
         <p className="hint">
           {model.gridfinity
             ? 'Standard Gridfinity foot, baseplate clearance and magnet/screw sockets.'
@@ -100,50 +164,21 @@ export default function Sidebar({
         </p>
 
         <Field label={model.gridfinity ? 'Grid unit size' : 'Cell size'}>
-          <NumberInput
-            value={model.gridUnit}
-            min={10}
-            max={80}
-            step={1}
-            unit="mm"
-            onChange={(v) => patch({ gridUnit: v })}
-          />
+          <NumberInput value={model.gridUnit} min={10} max={80} step={1} unit="mm"
+            onChange={(v) => patch({ gridUnit: v })} />
         </Field>
 
         {!model.customSize && (
           <>
-            <UnitStepper
-              label="X units"
-              value={model.unitsX}
-              onChange={(v) => patch({ unitsX: v })}
-            />
-            <UnitStepper
-              label="Y units"
-              value={model.unitsY}
-              onChange={(v) => patch({ unitsY: v })}
-            />
-            <UnitStepper
-              label="Z units"
-              value={model.unitsZ}
-              min={1}
-              max={20}
-              onChange={(v) => patch({ unitsZ: v })}
-            />
+            <UnitStepper label="X units" value={model.unitsX} onChange={(v) => patch({ unitsX: v })} />
+            <UnitStepper label="Y units" value={model.unitsY} onChange={(v) => patch({ unitsY: v })} />
+            <UnitStepper label="Z units" value={model.unitsZ} min={1} max={20}
+              onChange={(v) => patch({ unitsZ: v })} />
           </>
         )}
 
-        <Toggle
-          label="Custom Size"
-          checked={model.customSize}
-          onChange={(v) =>
-            patch({
-              customSize: v,
-              sizeX: size.x,
-              sizeY: size.y,
-              sizeZ: size.z,
-            })
-          }
-        />
+        <Toggle label="Custom Size" checked={model.customSize}
+          onChange={(v) => patch({ customSize: v, sizeX: size.x, sizeY: size.y, sizeZ: size.z })} />
 
         {model.customSize && (
           <>
@@ -162,19 +197,7 @@ export default function Sidebar({
           </>
         )}
 
-        <div className="measure-row">
-          <div className="measure-head">
-            <span>Measurements</span>
-            <button className="link" onClick={() => setInches(!inches)}>
-              {inches ? 'show mm' : 'show inches'}
-            </button>
-          </div>
-          <div className="measure-grid">
-            <span>X</span><b>{fmtLen(size.x)}</b>
-            <span>Y</span><b>{fmtLen(size.y)}</b>
-            <span>Z</span><b>{fmtLen(size.z)}</b>
-          </div>
-        </div>
+        <Measurements size={size} fmtLen={fmtLen} inches={inches} setInches={setInches} />
       </Section>
 
       <Section title="General" defaultOpen>
@@ -213,24 +236,105 @@ export default function Sidebar({
             <span className="divider-label">
               {d.axis === 'x' ? 'Vertical' : 'Horizontal'} divider
             </span>
-            <input
-              type="range"
-              min={0.05}
-              max={0.95}
-              step={0.01}
-              value={d.position}
-              onChange={(e) => updateDivider(d.id, { position: +e.target.value })}
-            />
+            <input type="range" min={0.05} max={0.95} step={0.01} value={d.position}
+              onChange={(e) => updateDivider(d.id, { position: +e.target.value })} />
             <span className="divider-pos">{Math.round(d.position * 100)}%</span>
             <button className="icon-btn" onClick={() => removeDivider(d.id)}>✕</button>
           </div>
         ))}
       </Section>
-    </aside>
+    </>
   )
 }
 
-// ---------- small presentational components ----------
+// ---------- Sliding-box controls ----------
+
+function BoxControls({
+  model,
+  setModel,
+  showBuildPlate,
+  setShowBuildPlate,
+}: {
+  model: BoxModel
+  setModel: (m: BoxModel) => void
+  showBuildPlate: boolean
+  setShowBuildPlate: (v: boolean) => void
+}) {
+  const [inches, setInches] = useState(false)
+  const patch = (p: Partial<BoxModel>) => setModel({ ...model, ...p })
+  const fmtLen = (mm: number) =>
+    inches ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`
+
+  return (
+    <>
+      <Section title="Inner size" defaultOpen>
+        <p className="hint">A closed box with a lid that slides into side grooves.
+          Dimensions are the usable interior; the lid inserts from the front.</p>
+        <Field label="Width (X)">
+          <NumberInput value={model.innerW} min={10} max={400} step={0.5} unit="mm"
+            onChange={(v) => patch({ innerW: v })} />
+        </Field>
+        <Field label="Depth (Y)">
+          <NumberInput value={model.innerD} min={10} max={400} step={0.5} unit="mm"
+            onChange={(v) => patch({ innerD: v })} />
+        </Field>
+        <Field label="Height (Z)">
+          <NumberInput value={model.innerH} min={5} max={300} step={0.5} unit="mm"
+            onChange={(v) => patch({ innerH: v })} />
+        </Field>
+        <Measurements
+          size={{ x: model.innerW, y: model.innerD, z: model.innerH }}
+          fmtLen={fmtLen} inches={inches} setInches={setInches}
+        />
+      </Section>
+
+      <Section title="Construction" defaultOpen>
+        <Toggle label="Show Build Plate" checked={showBuildPlate} onChange={setShowBuildPlate} />
+        <Field label="Wall thickness">
+          <NumberInput value={model.wall} min={1} max={6} step={0.1} unit="mm"
+            onChange={(v) => patch({ wall: v })} />
+        </Field>
+        <Field label="Lid thickness">
+          <NumberInput value={model.lidThickness} min={1} max={6} step={0.1} unit="mm"
+            onChange={(v) => patch({ lidThickness: v })} />
+        </Field>
+        <Field label="Lid clearance (fit)">
+          <NumberInput value={model.clearance} min={0} max={1} step={0.05} unit="mm"
+            onChange={(v) => patch({ clearance: v })} />
+        </Field>
+        <p className="hint">Smaller clearance = tighter slide. 0.2mm is a good
+          starting point; increase if the lid binds.</p>
+      </Section>
+    </>
+  )
+}
+
+// ---------- shared presentational components ----------
+
+function Measurements({
+  size, fmtLen, inches, setInches,
+}: {
+  size: { x: number; y: number; z: number }
+  fmtLen: (mm: number) => string
+  inches: boolean
+  setInches: (v: boolean) => void
+}) {
+  return (
+    <div className="measure-row">
+      <div className="measure-head">
+        <span>Measurements</span>
+        <button className="link" onClick={() => setInches(!inches)}>
+          {inches ? 'show mm' : 'show inches'}
+        </button>
+      </div>
+      <div className="measure-grid">
+        <span>X</span><b>{fmtLen(size.x)}</b>
+        <span>Y</span><b>{fmtLen(size.y)}</b>
+        <span>Z</span><b>{fmtLen(size.z)}</b>
+      </div>
+    </div>
+  )
+}
 
 function Section({ title, defaultOpen, children }: {
   title: string; defaultOpen?: boolean; children: React.ReactNode
@@ -340,6 +444,3 @@ function SegLip({ value, onChange }: { value: LipStyle; onChange: (v: LipStyle) 
 const clamp = (v: number, min: number, max: number) =>
   Number.isNaN(v) ? min : Math.min(max, Math.max(min, v))
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
-
-// keep GRIDFINITY import referenced for potential preset use
-void GRIDFINITY
