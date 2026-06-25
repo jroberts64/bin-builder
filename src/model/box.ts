@@ -54,12 +54,11 @@ function box(
 
 // Outer dimensions of the box body, for the dims readout / camera framing.
 export function boxOuterSize(m: BoxModel): { x: number; y: number; z: number } {
-  // Top rail above the groove + a small roof allowance over the lid.
-  const railTop = m.wall // material above the groove on the side walls
+  const railRoof = Math.max(0.8, m.wall * 0.8)
   return {
     x: m.innerW + 2 * m.wall,
-    y: m.innerD + m.wall, // back wall closed; front open
-    z: m.wall + m.innerH + m.lidThickness + 2 * m.clearance + railTop,
+    y: m.innerD + 2 * m.wall, // walls front and back (front is cut down internally)
+    z: m.wall + m.innerH + (m.lidThickness + 2 * m.clearance) + railRoof,
   }
 }
 
@@ -68,88 +67,100 @@ export function buildBox(m: BoxModel): BuiltBox {
   const c = m.clearance
   const lidT = m.lidThickness
 
-  const outerW = m.innerW + 2 * wall
-  // Front is open, back is a full wall: outer depth = cavity + one wall.
-  const outerD = m.innerD + wall
+  // The lid is the TOP of the box: it slides across grooves cut into the top
+  // inner edge of the left/right walls. Build cross-section bottom→top:
+  //
+  //   rail roof   ── thin overhang holding the lid down ─┐
+  //   groove slot ── lidT + 2c tall, lid rides here ─────┤  (in side walls only)
+  //   cavity      ── innerH of usable space ─────────────┘
+  //   floor       ── wall thick
+  //
+  // The front wall is cut down to the groove so the lid slides in; the back
+  // wall stays full height to stop it.
+
   const floorH = wall
+  const grooveH = lidT + 2 * c // vertical slot the lid rides in
+  const railRoof = Math.max(0.8, wall * 0.8) // overhang above the groove
 
-  // Groove that carries the lid: a slot of height (lidT + 2c) cut into the inner
-  // face of each side wall, plus the lid's running channel. Material thickness
-  // above the groove ("rail roof") keeps the lid captured and the top flush.
-  const grooveH = lidT + 2 * c
-  const railRoof = wall // solid material above the groove
-  // The lid rides at this height band inside the side walls.
-  const grooveBottomY = floorH + m.innerH + c // gap above the cavity floor space
-  const grooveTopY = grooveBottomY + grooveH
-  const outerH = grooveTopY + railRoof
+  const cavityBottom = floorH
+  const grooveBottom = cavityBottom + m.innerH
+  const grooveTop = grooveBottom + grooveH
+  const outerH = grooveTop + railRoof
 
-  // Centre everything on X/Z; box sits on Y=0. Depth spans z in
-  // [-outerD/2, +outerD/2]; the back wall is at -Z, the open mouth at +Z.
+  const outerW = m.innerW + 2 * wall
+  const outerD = m.innerD + 2 * wall // closed front AND back; front is cut down
+
+  // Centre on X/Z, box on Y=0. +Z = front (lid inserts here), -Z = back (stop).
   const zFront = outerD / 2
+  const zBack = -outerD / 2
 
-  // --- Box body: solid block, then subtract cavity, groove channel, mouth ---
+  // How far the groove reaches into each side wall (the lid tongue depth).
+  const tongueDepth = Math.min(wall - 0.6, wall * 0.6)
+  const grooveW = m.innerW + 2 * tongueDepth // full width across cavity + into walls
+
+  // --- Box body ------------------------------------------------------------
+  // Solid outer block, then hollow the cavity, cut the side grooves, and lower
+  // the front wall so the lid can enter.
   let body = box(outerW, outerH, outerD, 0, outerH / 2, 0)
 
-  // Main interior cavity (open top, holds contents). Spans full inner W/D/H and
-  // continues upward as the slot the lid slides over.
+  // Main cavity: innerW × innerH × innerD, closed on all four sides + floor,
+  // open at the top (up through the groove band).
   const cavity = box(
     m.innerW,
-    outerH, // cut all the way up; the rail roof is re-added by side groove geometry below
-    m.innerD + EPS, // open toward the front
+    outerH - floorH + EPS, // from floor up through the top
+    m.innerD,
     0,
     floorH + (outerH - floorH) / 2 + EPS,
-    zFront - m.innerD / 2 + EPS / 2,
+    0,
   )
   body = csgSubtract(body, cavity)
 
-  // Re-add the rail roof: a thin ceiling spanning the full inner width above the
-  // groove, so the lid is captured top-and-bottom and the box has a closed top.
-  const roof = box(
-    m.innerW + 2 * (wall - 0) + EPS, // span into both side walls
-    railRoof,
-    m.innerD + EPS,
-    0,
-    grooveTopY + railRoof / 2,
-    zFront - m.innerD / 2 + EPS / 2,
-  )
-  body = csgAdd(body, roof)
-
-  // Now carve the groove channel itself: a slot wider than the cavity (reaching
-  // into both side walls by the tongue depth) at the lid's height band, open to
-  // the front so the lid can enter. The back end stops short of the back wall so
-  // the lid butts against it.
-  const tongueDepth = wall - 0.6 // how far the lid tongue reaches into each wall
-  const grooveW = m.innerW + 2 * tongueDepth
+  // Side grooves: widen the opening into the two side walls, only across the
+  // groove height band, running the full depth and out through the FRONT so the
+  // lid slides in. Stops at the inner back face so the lid butts the back wall.
   const groove = box(
     grooveW,
     grooveH,
-    m.innerD + EPS, // from the front opening back to the inner back face
+    m.innerD + wall + EPS, // from inner back face out through the front wall
     0,
-    grooveBottomY + grooveH / 2,
-    zFront - m.innerD / 2 + EPS / 2,
+    grooveBottom + grooveH / 2,
+    zFront - (m.innerD + wall) / 2 + EPS, // pushed toward the front opening
   )
   body = csgSubtract(body, groove)
 
-  // Reopen the front mouth fully across the groove+cavity so the lid inserts.
-  // (The cavity subtraction already opens the front; nothing more needed.)
+  // Lower the front wall to the groove bottom so the lid passes over it (the
+  // groove already opened the band; this removes the wall above the cavity at
+  // the front too, giving a clean mouth). Remove front wall from groove-bottom
+  // up across the full inner width.
+  const frontMouth = box(
+    m.innerW + EPS,
+    outerH - grooveBottom + EPS,
+    wall + EPS,
+    0,
+    grooveBottom + (outerH - grooveBottom) / 2 + EPS,
+    zFront - wall / 2 + EPS,
+  )
+  body = csgSubtract(body, frontMouth)
+  void zBack
 
   body = weld(body)
   body.computeBoundingBox()
 
-  // --- Lid: flat panel with side tongues, sized with clearance all round ------
-  // Width spans into the grooves; running length = inner depth so it seats
-  // against the back wall and is flush at the front. Height = lidT.
+  // --- Lid: flat panel sized to slide in the grooves with clearance ---------
   const lidW = grooveW - 2 * c
-  const lidLen = m.innerD - c // small gap at the back so it fully seats
-  const lidY = grooveBottomY + c + lidT / 2
+  const lidLen = m.innerD + tongueDepth - c // seats against back, flush at front
+  const lidY = grooveBottom + c + lidT / 2
 
-  // Build the lid where it would sit (for the assembled preview), then the
-  // exporter/caller can relocate it to print flat.
-  let lid = box(lidW, lidT, lidLen, 0, lidY, zFront - m.innerD / 2)
+  // Positioned where it sits when closed (for the assembled preview): front
+  // edge flush with the box front, extending back toward the stop.
+  const lidFrontZ = zFront - wall + EPS
+  const lidCenterZ = lidFrontZ - lidLen / 2
+  let lid = box(lidW, lidT, lidLen, 0, lidY, lidCenterZ)
 
-  // Finger pull: a small nub on the front edge of the lid to grip it.
+  // Finger pull: a small tab projecting from the front edge of the lid to grip.
   const pullW = Math.min(20, m.innerW * 0.4)
-  const pull = box(pullW, lidT, 4, 0, lidY, zFront - c - 2 + EPS)
+  const pullDepth = 5
+  const pull = box(pullW, lidT, pullDepth, 0, lidY, lidFrontZ + pullDepth / 2 - EPS)
   lid = csgAdd(lid, pull)
 
   lid = weld(lid)
