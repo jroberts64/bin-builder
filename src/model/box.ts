@@ -32,8 +32,8 @@ export function defaultBox(): BoxModel {
     innerW: 80,
     innerD: 120,
     innerH: 30,
-    wall: 2,
-    lidThickness: 2,
+    wall: 3, // thicker default: 2mm side walls flex and let the lid pop out
+    lidThickness: 2.4,
     clearance: 0.2,
   }
 }
@@ -141,6 +141,29 @@ export function buildBox(m: BoxModel): BuiltBox {
     zFront - wall / 2 + EPS,
   )
   body = csgSubtract(body, frontMouth)
+
+  // Reinforce the open front: the side walls are only tied together by the floor
+  // and back wall, so their front edges splay outward when the lid is pushed in,
+  // letting the lid pop out of the grooves. Add a small solid brace in each
+  // front-inner corner, from the floor up to just below the groove, gusseting
+  // the side wall to the floor at the mouth. Kept below the groove so it never
+  // blocks the lid's travel.
+  const braceH = m.innerH // floor top → groove bottom (cavity height)
+  const braceW = Math.min(6, m.innerW * 0.12) // reach into the cavity along X
+  const braceD = Math.min(8, m.innerD * 0.12) // reach back along Z from the front
+  const innerFrontZ = zFront - wall // inner face of the (now lowered) front wall
+  for (const sx of [-1, 1]) {
+    const bx = sx * (m.innerW / 2 - braceW / 2) // hug the side wall, inside cavity
+    const brace = box(
+      braceW + EPS,
+      braceH + EPS,
+      braceD,
+      bx,
+      cavityBottom + braceH / 2,
+      innerFrontZ - braceD / 2 + EPS,
+    )
+    body = csgAdd(body, brace)
+  }
   void zBack
 
   body = weld(body)
