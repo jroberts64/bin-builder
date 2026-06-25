@@ -12,7 +12,7 @@ import {
   export3MF,
   exportSTL,
   exportBox3MF,
-  exportBoxSTL,
+  exportBoxSTLZip,
   downloadBlob,
 } from './model/export'
 import SaveMenu from './SaveMenu'
@@ -47,22 +47,24 @@ export default function Sidebar({
   const isBin = design.type === 'bin'
 
   // Use the saved design name for export downloads, falling back to a default.
-  const exportFilename = (ext: string) => {
+  const baseName = () => {
     const fallback = isBin ? 'bin' : 'box'
-    const base = currentName.trim().replace(/[^a-z0-9-_]+/gi, '_') || fallback
-    return `${base}.${ext}`
+    return currentName.trim().replace(/[^a-z0-9-_]+/gi, '_') || fallback
   }
 
-  const doExportSTL = () =>
-    downloadBlob(
-      isBin ? exportSTL(design.bin) : exportBoxSTL(design.box),
-      exportFilename('stl'),
-    )
-  const doExport3MF = () =>
-    downloadBlob(
-      isBin ? export3MF(design.bin) : exportBox3MF(design.box),
-      exportFilename('3mf'),
-    )
+  // Bin → single .stl. Box → a .zip of box.stl + lid.stl (STL has no concept of
+  // separate objects, so two files keep them distinct in the slicer).
+  const doExportSTL = () => {
+    const base = baseName()
+    if (isBin) downloadBlob(exportSTL(design.bin), `${base}.stl`)
+    else downloadBlob(exportBoxSTLZip(design.box, base), `${base}.zip`)
+  }
+  // 3MF supports multiple objects natively, so the box 3MF carries box + lid as
+  // two separate objects in one file.
+  const doExport3MF = () => {
+    const base = baseName()
+    downloadBlob(isBin ? export3MF(design.bin) : exportBox3MF(design.box), `${base}.3mf`)
+  }
 
   return (
     <aside className="sidebar">

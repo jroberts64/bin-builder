@@ -1,6 +1,5 @@
 import * as THREE from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { BinModel } from './types'
 import { BoxModel } from './box'
 import { buildBin } from './geometry'
@@ -28,30 +27,47 @@ export function exportSTL(model: BinModel): Blob {
   return geometryToSTL(exportGeometry(model))
 }
 
-// --- Sliding-lid box: box body + lid, both laid out flat and combined into one
-// STL/3MF positioned side by side so they print together. ---------------------
+// --- Sliding-lid box: box body + lid as TWO separate objects, laid out side by
+// side on the plate. 3MF keeps them as distinct objects; STL (which has no
+// object concept) ships two files in a zip. -----------------------------------
 
-function boxExportGeometry(model: BoxModel): THREE.BufferGeometry {
+// Return the box and lid as two Z-up geometries, positioned beside each other so
+// neither overlaps and both sit flat on the plate.
+function boxExportParts(model: BoxModel): { box: THREE.BufferGeometry; lid: THREE.BufferGeometry } {
   const { box, lid, size } = buildBox(model)
-  // Box prints as-is (open mouth up is fine). Lid: drop it to the plate next to
-  // the box so both sit flat and don't overlap.
   const boxG = box.clone()
   const lidG = lid.clone()
+  // Drop the lid to the plate and place it beside the box with a 10mm gap.
   lidG.computeBoundingBox()
   const lb = lidG.boundingBox!
-  // Move lid down to y=0 and beside the box along +X with a 10mm gap.
   lidG.translate(0, -lb.min.y, 0)
   lidG.translate(size.x / 2 + (lb.max.x - lb.min.x) / 2 + 10, 0, 0)
-  const combined = mergeGeometries([boxG, lidG], false)!
-  return toZUp(combined)
-}
-
-export function exportBoxSTL(model: BoxModel): Blob {
-  return geometryToSTL(boxExportGeometry(model))
+  return { box: toZUp(boxG), lid: toZUp(lidG) }
 }
 
 export function exportBox3MF(model: BoxModel): Blob {
-  return geometryToBlob3MF(boxExportGeometry(model))
+  const { box, lid } = boxExportParts(model)
+  // Two <object>s → two separate objects in the slicer.
+  return geometriesToBlob3MF([box, lid])
+}
+
+// STL has no notion of separate objects, so a single .stl is always one mesh.
+// Ship the two parts as separate .stl files inside a zip.
+export function exportBoxSTLZip(model: BoxModel, baseName: string): Blob {
+  const { box, lid } = boxExportParts(model)
+  const boxStl = new Uint8Array(stlBytes(box))
+  const lidStl = new Uint8Array(stlBytes(lid))
+  const zip = zipStoreBinary([
+    { name: `${baseName}-box.stl`, data: boxStl },
+    { name: `${baseName}-lid.stl`, data: lidStl },
+  ])
+  return new Blob([zip as unknown as ArrayBuffer], { type: 'application/zip' })
+}
+
+function stlBytes(geom: THREE.BufferGeometry): ArrayBuffer {
+  const mesh = new THREE.Mesh(geom)
+  const dv = new STLExporter().parse(mesh, { binary: true }) as unknown as DataView
+  return dv.buffer as ArrayBuffer
 }
 
 // --- Minimal 3MF writer ---------------------------------------------------
@@ -63,15 +79,17 @@ export function export3MF(model: BinModel): Blob {
 }
 
 function geometryToBlob3MF(geom: THREE.BufferGeometry): Blob {
-  const pos = geom.getAttribute('position') as THREE.BufferAttribute
+  return geometriesToBlob3MF([geom])
+}
 
+// One <object> with a <mesh> for a single geometry, numbered by id.
+function meshObjectXml(geom: THREE.BufferGeometry, id: number): string {
+  const pos = geom.getAttribute('position') as THREE.BufferAttribute
   const verts: string[] = []
   const tris: string[] = []
   const count = pos.count
   for (let i = 0; i < count; i++) {
-    verts.push(
-      `<vertex x="${fmt(pos.getX(i))}" y="${fmt(pos.getY(i))}" z="${fmt(pos.getZ(i))}"/>`,
-    )
+    verts.push(`<vertex x="${fmt(pos.getX(i))}" y="${fmt(pos.getY(i))}" z="${fmt(pos.getZ(i))}"/>`)
   }
   const index = geom.getIndex()
   if (index) {
@@ -83,15 +101,26 @@ function geometryToBlob3MF(geom: THREE.BufferGeometry): Blob {
       tris.push(`<triangle v1="${i}" v2="${i + 1}" v3="${i + 2}"/>`)
     }
   }
+  return (
+    `<object id="${id}" type="model"><mesh>` +
+    `<vertices>${verts.join('')}</vertices>` +
+    `<triangles>${tris.join('')}</triangles>` +
+    `</mesh></object>`
+  )
+}
+
+// Emit one 3MF package containing each geometry as its OWN object, so slicers
+// load them as separate objects (no "split to parts" needed). Geometries must
+// already be positioned (e.g. laid out side by side) in Z-up mm.
+function geometriesToBlob3MF(geoms: THREE.BufferGeometry[]): Blob {
+  const objects = geoms.map((g, i) => meshObjectXml(g, i + 1)).join('')
+  const items = geoms.map((_, i) => `<item objectid="${i + 1}"/>`).join('')
 
   const modelXml =
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n` +
-    `<resources><object id="1" type="model"><mesh>\n` +
-    `<vertices>${verts.join('')}</vertices>\n` +
-    `<triangles>${tris.join('')}</triangles>\n` +
-    `</mesh></object></resources>\n` +
-    `<build><item objectid="1"/></build>\n` +
+    `<resources>${objects}</resources>\n` +
+    `<build>${items}</build>\n` +
     `</model>`
 
   const contentTypes =
@@ -124,8 +153,18 @@ interface ZipEntry {
   name: string
   data: string
 }
+interface ZipEntryBinary {
+  name: string
+  data: Uint8Array
+}
 
+// String-data convenience wrapper (used by the 3MF package writer).
 function zipStore(entries: ZipEntry[]): Uint8Array {
+  const enc = new TextEncoder()
+  return zipStoreBinary(entries.map((e) => ({ name: e.name, data: enc.encode(e.data) })))
+}
+
+function zipStoreBinary(entries: ZipEntryBinary[]): Uint8Array {
   const enc = new TextEncoder()
   const chunks: Uint8Array[] = []
   const central: Uint8Array[] = []
@@ -133,7 +172,7 @@ function zipStore(entries: ZipEntry[]): Uint8Array {
 
   for (const e of entries) {
     const nameBytes = enc.encode(e.name)
-    const dataBytes = enc.encode(e.data)
+    const dataBytes = e.data
     const crc = crc32(dataBytes)
     const size = dataBytes.length
 
