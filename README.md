@@ -9,11 +9,15 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
 
 ## Features
 
-- **Two object types** — a Gridfinity-style **bin**, or a **sliding-lid box**
-  (closed box whose lid slides into side grooves). Switch via the header tabs.
-- **Sliding box** — define the inner width/depth/height; generates a watertight
-  box body + a sliding lid with adjustable fit clearance, laid out flat for
-  printing. Lid inserts from the front and seats against the closed back.
+- **Two object types** — a Gridfinity-style **bin**, or a **box** with a choice
+  of top. Switch via the header tabs.
+- **Box tops** — define the inner width/depth/height, then pick a top type:
+  - **Sliding lid** — slides into grooves in the side walls, inserts from the
+    front, seats against the closed back. Exports box + lid as two parts.
+  - **Hinged lid** — a print-in-place pin hinge at the back; prints open & flat
+    (box + lid joined, no supports, hinge axis along the bed) and folds closed
+    with an overlapping lip + snap bead. Exports as one combined object.
+    Hinge/knuckle clearances follow FDM best practice (~0.25mm pin gap).
 - **Gridfinity toggle** — switch the Gridfinity foot, baseplate clearance and
   magnet/screw sockets on or off. Off = a plain flat-bottomed tray. Independent
   of how the bin is sized.

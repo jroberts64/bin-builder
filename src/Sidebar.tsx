@@ -12,7 +12,7 @@ import {
   export3MF,
   exportSTL,
   exportBox3MF,
-  exportBoxSTLZip,
+  exportBoxSTL,
   downloadBlob,
 } from './model/export'
 import SaveMenu from './SaveMenu'
@@ -52,12 +52,17 @@ export default function Sidebar({
     return currentName.trim().replace(/[^a-z0-9-_]+/gi, '_') || fallback
   }
 
-  // Bin → single .stl. Box → a .zip of box.stl + lid.stl (STL has no concept of
-  // separate objects, so two files keep them distinct in the slicer).
+  // Bin → single .stl. Sliding box → .zip of box.stl + lid.stl. Hinged box →
+  // one combined .stl (it's a single print-in-place assembly). exportBoxSTL
+  // returns the right extension for the box case.
   const doExportSTL = () => {
     const base = baseName()
-    if (isBin) downloadBlob(exportSTL(design.bin), `${base}.stl`)
-    else downloadBlob(exportBoxSTLZip(design.box, base), `${base}.zip`)
+    if (isBin) {
+      downloadBlob(exportSTL(design.bin), `${base}.stl`)
+    } else {
+      const { blob, ext } = exportBoxSTL(design.box, base)
+      downloadBlob(blob, `${base}.${ext}`)
+    }
   }
   // 3MF supports multiple objects natively, so the box 3MF carries box + lid as
   // two separate objects in one file.
@@ -267,11 +272,28 @@ function BoxControls({
   const fmtLen = (mm: number) =>
     inches ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`
 
+  const hinged = model.topType === 'hinged'
+
   return (
     <>
+      <Section title="Top type" defaultOpen>
+        <div className="seg">
+          <button className={!hinged ? 'active' : ''} onClick={() => patch({ topType: 'sliding' })}>
+            Sliding lid
+          </button>
+          <button className={hinged ? 'active' : ''} onClick={() => patch({ topType: 'hinged' })}>
+            Hinged lid
+          </button>
+        </div>
+        <p className="hint">
+          {hinged
+            ? 'Print-in-place hinged lid: prints open & flat (box + lid joined at the back hinge). Folds closed with an overlapping lip + snap.'
+            : 'Sliding lid: slides into grooves in the side walls, inserts from the front.'}
+        </p>
+      </Section>
+
       <Section title="Inner size" defaultOpen>
-        <p className="hint">A closed box with a lid that slides into side grooves.
-          Dimensions are the usable interior; the lid inserts from the front.</p>
+        <p className="hint">Dimensions are the usable interior cavity.</p>
         <Field label="Width (X)">
           <NumberInput value={model.innerW} min={10} max={400} step={0.5} unit="mm"
             onChange={(v) => patch({ innerW: v })} />
@@ -300,12 +322,15 @@ function BoxControls({
           <NumberInput value={model.lidThickness} min={1} max={6} step={0.1} unit="mm"
             onChange={(v) => patch({ lidThickness: v })} />
         </Field>
-        <Field label="Lid clearance (fit)">
+        <Field label={hinged ? 'Hinge clearance (fit)' : 'Lid clearance (fit)'}>
           <NumberInput value={model.clearance} min={0} max={1} step={0.05} unit="mm"
             onChange={(v) => patch({ clearance: v })} />
         </Field>
-        <p className="hint">Smaller clearance = tighter slide. 0.2mm is a good
-          starting point; increase if the lid binds.</p>
+        <p className="hint">
+          {hinged
+            ? 'Gap around the hinge pin/knuckles. 0.2–0.3mm is the sweet spot; too small fuses the hinge solid, too large is floppy.'
+            : 'Smaller clearance = tighter slide. 0.2mm is a good starting point; increase if the lid binds.'}
+        </p>
       </Section>
     </>
   )

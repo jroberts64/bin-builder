@@ -69,6 +69,7 @@ export function coerceBox(raw: unknown): BoxModel {
   const d = defaultBox()
   const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<BoxModel>
   return {
+    topType: oneOf(m.topType, ['sliding', 'hinged'], d.topType),
     innerW: num(m.innerW, d.innerW, 10, 400),
     innerD: num(m.innerD, d.innerD, 10, 400),
     innerH: num(m.innerH, d.innerH, 5, 300),

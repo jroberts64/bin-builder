@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { BinModel } from './types'
 import { BoxModel } from './box'
 import { buildBin } from './geometry'
@@ -31,13 +32,20 @@ export function exportSTL(model: BinModel): Blob {
 // side on the plate. 3MF keeps them as distinct objects; STL (which has no
 // object concept) ships two files in a zip. -----------------------------------
 
-// Return the box and lid as two Z-up geometries, positioned beside each other so
-// neither overlaps and both sit flat on the plate.
+// Return the box and lid as two Z-up geometries. For a SLIDING box the two
+// parts are separated side by side on the plate (they're assembled by hand). For
+// a HINGED box they're a print-in-place assembly, so they stay exactly as
+// modelled (interlocked at the hinge) and are only dropped to the plate.
 function boxExportParts(model: BoxModel): { box: THREE.BufferGeometry; lid: THREE.BufferGeometry } {
   const { box, lid, size } = buildBox(model)
   const boxG = box.clone()
   const lidG = lid.clone()
-  // Drop the lid to the plate and place it beside the box with a 10mm gap.
+  if (model.topType === 'hinged') {
+    // Keep relative positions (the hinge must print in place). Both already sit
+    // on Y=0 as modelled; just convert to Z-up.
+    return { box: toZUp(boxG), lid: toZUp(lidG) }
+  }
+  // Sliding: drop the lid to the plate and place it beside the box with a gap.
   lidG.computeBoundingBox()
   const lb = lidG.boundingBox!
   lidG.translate(0, -lb.min.y, 0)
@@ -47,21 +55,26 @@ function boxExportParts(model: BoxModel): { box: THREE.BufferGeometry; lid: THRE
 
 export function exportBox3MF(model: BoxModel): Blob {
   const { box, lid } = boxExportParts(model)
-  // Two <object>s → two separate objects in the slicer.
+  // Two <object>s, in their export positions (interlocked for hinged, apart for
+  // sliding) — slicers load them as two objects either way.
   return geometriesToBlob3MF([box, lid])
 }
 
-// STL has no notion of separate objects, so a single .stl is always one mesh.
-// Ship the two parts as separate .stl files inside a zip.
-export function exportBoxSTLZip(model: BoxModel, baseName: string): Blob {
+// STL export for a box. STL has no notion of separate objects, so:
+//   - hinged: a single print-in-place assembly → one combined .stl (Blob, .stl)
+//   - sliding: two hand-assembled parts → two .stl files in a .zip
+// Returns the blob and the file extension to use.
+export function exportBoxSTL(model: BoxModel, baseName: string): { blob: Blob; ext: string } {
   const { box, lid } = boxExportParts(model)
-  const boxStl = new Uint8Array(stlBytes(box))
-  const lidStl = new Uint8Array(stlBytes(lid))
+  if (model.topType === 'hinged') {
+    const combined = mergeGeometries([box, lid], false)!
+    return { blob: geometryToSTL(combined), ext: 'stl' }
+  }
   const zip = zipStoreBinary([
-    { name: `${baseName}-box.stl`, data: boxStl },
-    { name: `${baseName}-lid.stl`, data: lidStl },
+    { name: `${baseName}-box.stl`, data: new Uint8Array(stlBytes(box)) },
+    { name: `${baseName}-lid.stl`, data: new Uint8Array(stlBytes(lid)) },
   ])
-  return new Blob([zip as unknown as ArrayBuffer], { type: 'application/zip' })
+  return { blob: new Blob([zip as unknown as ArrayBuffer], { type: 'application/zip' }), ext: 'zip' }
 }
 
 function stlBytes(geom: THREE.BufferGeometry): ArrayBuffer {
