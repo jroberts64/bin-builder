@@ -4,9 +4,12 @@ Guidance for working in this repo. Read alongside `README.md` (user-facing) — 
 
 ## What this is
 
-A browser-based parametric **bin builder** for 3D printing, inspired by the Gridfinity Generator. Configure a storage bin with a live 3D preview and export print-ready **STL** and **3MF** files. Gridfinity-aware (42mm grid, chamfered foot, stacking lip) but **not constrained by it** — the grid pitch is adjustable and a custom-size mode frees the footprint entirely.
+A browser-based parametric builder for 3D-printable storage, with a live 3D preview and print-ready **STL** / **3MF** export. Two **object types** (see "Object types" below):
 
-Runs 100% in-browser. No backend, no persistence.
+- **Bin** — a Gridfinity-style bin. Gridfinity-aware (42mm grid, chamfered foot, stacking lip) but not constrained by it: the grid pitch is adjustable and a custom-size mode frees the footprint entirely.
+- **Box** — a closed box with a choice of **top type**: a **sliding lid** or a print-in-place **hinged lid**.
+
+Runs 100% in-browser. No backend. Designs persist in localStorage (autosave + named saves) and can be shared via URL.
 
 ## Stack
 
@@ -23,29 +26,56 @@ npm run preview  # serve the production build
 
 There is **no test suite and no linter configured**. "Verify" means: `npm run build` compiles clean, then load the app and check the 3D preview + export in a browser. Don't claim something works without doing that.
 
+`npm run build` (Vite/esbuild) does **not** full-type-check. Run `npx tsc --noEmit` for that — but note **two known pre-existing errors** it reports (the `manifold-3d/manifold.wasm?url` import has no type decl; a `Uint8Array`→`BlobPart` cast in the ZIP writer). Both are harmless and don't affect the Vite build; ignore them and only act on *new* errors.
+
+Strong way to verify geometry/exports without a human: drive the running dev app via the Playwright MCP tools and `import()` the model/export modules in-page (init CSG first), then assert watertightness (0 open / 0 non-manifold edges), STL size (`84+tris*50`), and 3MF object counts. This is how every geometry change in this repo has been checked.
+
 ## Architecture
 
 | Path | Responsibility |
 |------|----------------|
-| `src/model/types.ts` | `BinModel` data model, `GRIDFINITY` constants, `defaultBin()`, `resolvedSize()`. Single source of truth for parameters. |
-| `src/model/geometry.ts` | `buildBin(model)` — assembles the mesh via CSG. The heart of the app. |
+| `src/model/types.ts` | `BinModel` data model, `GRIDFINITY` constants, `defaultBin()`, `resolvedSize()`. |
+| `src/model/box.ts` | `BoxModel` (incl. `topType: 'sliding' \| 'hinged'`), `defaultBox()`, `boxOuterSize()`, `buildBox()` → `{ box, lid, size }` (two meshes). Sliding + hinged geometry. |
+| `src/model/geometry.ts` | `buildBin(model)` — assembles the bin mesh via CSG. |
 | `src/model/csg.ts` | Manifold (WASM) `csgAdd` / `csgSubtract` wrappers, `initCSG()` async init, THREE↔Manifold mesh conversion, `weld()` (vertex merge). |
-| `src/model/export.ts` | `exportSTL` / `export3MF` + a dependency-free ZIP/OPC writer with CRC32. |
-| `src/model/serialize.ts` | Versioned (de)serialization, `coerceModel()` validation, `.json` and share-URL (`?d=` base64url) encode/decode. |
-| `src/model/storage.ts` | localStorage: named-design CRUD + the single autosave slot. All reads defensive (corrupt store → empty/null). |
-| `src/Viewport.tsx` | Three.js scene, lights, OrbitControls, build plate. Rebuilds the mesh on model change (debounced). |
-| `src/Sidebar.tsx` | All parameter controls + header (export buttons + `SaveMenu`). Self-contained presentational components at the bottom. |
+| `src/model/export.ts` | Bin `exportSTL`/`export3MF`; box `exportBoxSTL`/`exportBox3MF`; multi-object 3MF writer + dependency-free ZIP/OPC writer with CRC32. |
+| `src/model/serialize.ts` | `Design` envelope `{ type, bin, box }`, versioned (de)serialization, `coerceModel`/`coerceBox`/`coerceDesign` validation, `.json` and share-URL (`?d=` base64url) encode/decode. |
+| `src/model/storage.ts` | localStorage: named-design CRUD + the single autosave slot (both store a `Design`). All reads defensive (corrupt store → empty/null). |
+| `src/Viewport.tsx` | Three.js scene, lights, OrbitControls, build plate. Renders 1 mesh (bin) or 2 (box + lid) in a group; rebuilds on design change (debounced). |
+| `src/Sidebar.tsx` | Object-type switch + per-type controls (`BinControls`/`BoxControls`) + header (export buttons + `SaveMenu`). Shared presentational components at the bottom. |
 | `src/SaveMenu.tsx` | Save/load/delete designs, import/export `.json`, copy share link. Dropdown from the header. |
-| `src/App.tsx` | Top-level state (`BinModel`, name, build-plate toggle, fit signal) + layout. Resolves the initial design and autosaves. |
+| `src/App.tsx` | Top-level state (`Design`, name, build-plate toggle, fit signal) + layout. Resolves the initial design and autosaves. |
 | `src/styles.css` | All styling. Dark theme; CSS variables at `:root`. |
 
-State flows one way: `App` owns the `BinModel`, passes it + a setter to `Sidebar`, and the model to `Viewport`. There is no global store; don't add one for this size of app.
+State flows one way: `App` owns a single `Design` (`{ type, bin, box }`), passes it + per-type setters to `Sidebar`, and the whole `Design` to `Viewport`. There is no global store; don't add one for this size of app.
 
 ## Persistence
 
-Anything that crosses the trust boundary (localStorage, `.json` import, `?d=` share URL) MUST go through `serialize.ts` — `coerceModel()` clamps every field to a safe range and drops bad enums/dividers, so untrusted input can never produce an invalid `BinModel`. Don't `JSON.parse` a design and feed it to `buildBin` directly.
+Anything that crosses the trust boundary (localStorage, `.json` import, `?d=` share URL) MUST go through `serialize.ts` — `coerceDesign()` (calling `coerceModel`/`coerceBox`) clamps every field to a safe range and drops bad enums, so untrusted input can never produce an invalid `Design`. Don't `JSON.parse` a design and feed it to `buildBin`/`buildBox` directly.
 
-Initial design resolution order (`App.initialState`): share URL `?d=` → autosave slot → `defaultBin()`. Autosave is debounced (300ms) on every model change. Named designs are keyed by case-insensitive name (re-saving the same name overwrites). Bump `SCHEMA_VERSION` in `serialize.ts` if the model shape changes incompatibly, and handle the migration in `coerceModel`.
+The persisted unit is a `Design` envelope `{ type, bin, box }` — both models are always present so toggling object type preserves each one's settings. `coerceDesign` is back-compatible: a legacy bare-`BinModel` or `{ model }` shape coerces to `{ type: 'bin', … }`.
+
+Initial design resolution order (`App.initialState`): share URL `?d=` → autosave slot → `defaultDesign()`. Autosave is debounced (300ms) on every change. Named designs are keyed by case-insensitive name (re-saving overwrites). Bump `SCHEMA_VERSION` in `serialize.ts` if the shape changes incompatibly, and handle the migration in the coerce functions.
+
+## Object types: bin vs box
+
+`Design.type` selects which object is built/shown/exported. The two are independent code paths sharing only the CSG kernel and exporters:
+
+- **bin** → `buildBin` (`geometry.ts`), one mesh. See the two axes + bin geometry below.
+- **box** → `buildBox` (`box.ts`), returns **two** meshes (`box` body + `lid`). `box.ts` is self-contained; don't fold box logic into `geometry.ts`.
+
+Adding a third object type means: a model + `default*()` + builder in its own module, a `coerce*` in `serialize.ts`, a branch in `Design`/`buildBox`-style dispatch, a `*Controls` component in `Sidebar.tsx`, and Viewport/export branches. Keep each object's geometry in its own module.
+
+## Box top types (`box.ts`)
+
+`BoxModel.topType` is `'sliding' | 'hinged'`; `buildBox` dispatches to `buildSlidingBox` / `buildHingedBox`. Box dimensions are the **inner cavity** (not outer). Both builders return watertight `box` + `lid` meshes, modelled Y-up on Y=0.
+
+- **sliding** — lid rides in grooves cut into the top inner edge of the side walls; back wall closed (stop), front open (insert). Exported as **two separate parts** (3MF = 2 objects; STL = `.zip` of `-box.stl` + `-lid.stl`).
+- **hinged** — **print-in-place pin hinge** at the back edge. Modelled/printed **open & flat**: box open-top up, lid flat on the plate behind it, joined by interleaved knuckles + a fused pin. Prints supportless with the pin axis along the bed (never on Z — that cracks). Overlapping lip + snap bead hold it shut. Exported as **one print-in-place assembly**, parts left **interlocked in place, NOT moved apart** (3MF = 2 objects in position; STL = one combined `.stl`).
+
+### Hinge clearances (research-backed; don't reduce blindly)
+
+FDM print-in-place sweet spot is **0.2–0.3mm**. Defaults: pin-to-bore `boreGap` ≈ 0.25mm, knuckle-to-knuckle gap ≈ 0.3mm, odd knuckle count (5) so both ends are box knuckles. Too small fuses the hinge solid (the #1 failure); too large is floppy. The `clearance` field drives these. If you touch hinge geometry, re-verify: knuckles interleave (alternating box/lid bands, no overlap) and the exported STL stays **interlocked** (X-extent ≈ box width, not ≈ box+lid moved apart).
 
 ## Two independent axes: Gridfinity vs sizing
 
@@ -74,7 +104,7 @@ Constructive solid geometry pipeline, in order:
 4. Subtract magnet / screw sockets from the underside
 5. Add the stacking lip, then `weld()` the whole thing into one indexed mesh
 
-**Coordinate convention:** Y is up in the viewport; the build plate is at `Y = 0`. Exporters bake a `-90° X` rotation to convert to **Z-up** (slicer convention) — see `exportGeometry` in `export.ts`.
+**Coordinate convention:** Y is up in the viewport; the build plate is at `Y = 0`. Exporters bake a `+90° X` rotation (`toZUp` in `export.ts`) to convert to **Z-up** (slicer convention). (It's +90°, not −90° — −90° prints upside down; that was a real bug we fixed.)
 
 ### Hard-won rules for editing geometry — read before touching `buildBin`
 
@@ -91,8 +121,9 @@ When verifying exports: check structural validity (STL header/size consistency `
 
 ## Export format notes
 
-- **STL** — binary, via Three's `STLExporter`. File size must equal `84 + triangles*50`; that's the validity check.
-- **3MF** — built by hand: a stored (uncompressed) ZIP of `[Content_Types].xml`, `_rels/.rels`, and `3D/3dmodel.model`. Millimetre units. The ZIP writer + CRC32 in `export.ts` are intentionally dependency-free; don't pull in JSZip.
+- **STL** — binary, via Three's `STLExporter`. File size must equal `84 + triangles*50`; that's the validity check. STL has **no concept of separate objects** (one file = one mesh soup), which is why multi-part exports differ from 3MF: a sliding box ships a **`.zip` of two `.stl`s**; a hinged box is one combined `.stl` (single print-in-place assembly); a bin is one `.stl`.
+- **3MF** — built by hand: a stored (uncompressed) ZIP of `[Content_Types].xml`, `_rels/.rels`, and `3D/3dmodel.model`. Millimetre units. Supports **multiple objects**: `geometriesToBlob3MF([...])` emits one `<object>` + `<build><item>` per geometry, so boxes export as 2 objects. The ZIP writer (string + binary variants) + CRC32 in `export.ts` are intentionally dependency-free; don't pull in JSZip.
+- Models are Y-up; `toZUp()` rotates **+90° about X** to Z-up for export (slicer convention).
 - `grep -c "<triangle"` on the 3MF lies — all triangles are on one line, so it returns 1. Count substring occurrences, not lines.
 
 ## Conventions
