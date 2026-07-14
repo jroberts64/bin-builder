@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   BinModel,
   Divider,
@@ -243,9 +243,12 @@ function BinControls({
             <span className="divider-label">
               {d.axis === 'x' ? 'Vertical' : 'Horizontal'} divider
             </span>
-            <input type="range" min={0.05} max={0.95} step={0.01} value={d.position}
+            <input type="range" min={0.05} max={0.95} step={0.001} value={d.position}
               onChange={(e) => updateDivider(d.id, { position: +e.target.value })} />
-            <span className="divider-pos">{Math.round(d.position * 100)}%</span>
+            <span className="divider-pos">
+              <CommittedInput value={d.position * 100} min={5} max={95} step={0.1}
+                onCommit={(pct) => updateDivider(d.id, { position: pct / 100 })} />%
+            </span>
             <button className="icon-btn" onClick={() => removeDivider(d.id)}>✕</button>
           </div>
         ))}
@@ -393,14 +396,59 @@ function NumberInput({ value, min, max, step, unit, onChange }: {
 }) {
   return (
     <div className="num-input">
+      {/* Slider commits live (dragging is expected to update as you go). */}
       <input type="range" min={min} max={max} step={step} value={value}
         onChange={(e) => onChange(+e.target.value)} />
       <div className="num-box">
-        <input type="number" min={min} max={max} step={step} value={value}
-          onChange={(e) => onChange(clamp(+e.target.value, min, max))} />
+        <CommittedInput value={value} min={min} max={max} step={step} onCommit={onChange} />
         {unit && <span className="unit">{unit}</span>}
       </div>
     </div>
+  )
+}
+
+// A numeric <input> that only commits on blur or Enter — NOT on every keystroke.
+// Typing is kept in local text state so mid-edit values (an empty box, or "2"
+// while changing "25" to "26") don't snap the model to `min`. Escape reverts.
+// Stays in sync with `value` whenever the field isn't being edited (e.g. the
+// slider moved it). Bare <input> so callers control the surrounding chrome.
+function CommittedInput({ value, min, max, step, onCommit }: {
+  value: number; min: number; max: number; step: number
+  onCommit: (v: number) => void
+}) {
+  const [text, setText] = useState(() => fmtNum(value))
+  const focused = useRef(false)
+
+  useEffect(() => {
+    if (!focused.current) setText(fmtNum(value))
+  }, [value])
+
+  const commit = () => {
+    focused.current = false
+    const parsed = parseFloat(text)
+    if (Number.isNaN(parsed)) {
+      setText(fmtNum(value)) // empty / garbage → revert to the last good value
+      return
+    }
+    const c = clamp(parsed, min, max)
+    onCommit(c)
+    setText(fmtNum(c))
+  }
+
+  return (
+    <input
+      type="number" min={min} max={max} step={step} value={text}
+      onFocus={() => { focused.current = true }}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+        else if (e.key === 'Escape') {
+          setText(fmtNum(value))
+          ;(e.target as HTMLInputElement).blur()
+        }
+      }}
+    />
   )
 }
 
@@ -470,4 +518,7 @@ function SegLip({ value, onChange }: { value: LipStyle; onChange: (v: LipStyle) 
 
 const clamp = (v: number, min: number, max: number) =>
   Number.isNaN(v) ? min : Math.min(max, Math.max(min, v))
+// Round to 3 decimals and stringify, so float noise (e.g. 0.333*100) doesn't
+// show as "33.30000000000001" in the input.
+const fmtNum = (n: number) => String(Math.round(n * 1000) / 1000)
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)

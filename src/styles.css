@@ -198,7 +198,14 @@ html, body, #root {
 }
 .divider-label { font-size: 11px; flex: 1; }
 .divider-item input[type='range'] { flex: 1.4; }
-.divider-pos { font-size: 11px; color: var(--muted); min-width: 32px; text-align: right; }
+.divider-pos {
+  font-size: 11px; color: var(--muted); min-width: 50px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 1px;
+}
+.divider-pos input {
+  width: 34px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text); font-size: 11px; text-align: right; padding: 1px 3px;
+}
 .icon-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; }
 .icon-btn:hover { color: #ff6b6b; }
 
