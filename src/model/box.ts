@@ -82,11 +82,10 @@ export function boxOuterSize(m: BoxModel): { x: number; y: number; z: number } {
       z: m.wall + m.innerH + m.lidThickness,
     }
   }
-  const railRoof = Math.max(0.8, m.wall * 0.8)
   return {
     x: m.innerW + 2 * m.wall,
     y: m.innerD + 2 * m.wall, // walls front and back (front is cut down internally)
-    z: m.wall + m.innerH + (m.lidThickness + 2 * m.clearance) + railRoof,
+    z: m.wall + m.innerH + (m.lidThickness + 2 * m.clearance), // top = top of lid slot
   }
 }
 
@@ -99,25 +98,25 @@ function buildSlidingBox(m: BoxModel): BuiltBox {
   const c = m.clearance
   const lidT = m.lidThickness
 
-  // The lid is the TOP of the box: it slides across grooves cut into the top
-  // inner edge of the left/right walls. Build cross-section bottom→top:
+  // The lid is the TOP of the box: it slides into slots cut into the top inner
+  // edge of the left/right walls. Build cross-section bottom→top:
   //
-  //   rail roof   ── thin overhang holding the lid down ─┐
-  //   groove slot ── lidT + 2c tall, lid rides here ─────┤  (in side walls only)
-  //   cavity      ── innerH of usable space ─────────────┘
+  //   groove slot ── lidT + 2c tall, lid rides here, OPEN at top ──┐ (side walls)
+  //   cavity      ── innerH of usable space ───────────────────────┘
   //   floor       ── wall thick
   //
-  // The front wall is cut down to the groove so the lid slides in; the back
-  // wall stays full height to stop it.
+  // The slot is open at the top (no overhanging rail roof — that would print as
+  // an unsupported inward overhang and melt away in the slicer). The lid slides
+  // in from the front and butts the closed back wall; it rests in the side slots
+  // and can be lifted straight out.
 
   const floorH = wall
   const grooveH = lidT + 2 * c // vertical slot the lid rides in
-  const railRoof = Math.max(0.8, wall * 0.8) // overhang above the groove
 
   const cavityBottom = floorH
   const grooveBottom = cavityBottom + m.innerH
   const grooveTop = grooveBottom + grooveH
-  const outerH = grooveTop + railRoof
+  const outerH = grooveTop // box top = top of the lid slot (no rail roof)
 
   const outerW = m.innerW + 2 * wall
   const outerD = m.innerD + 2 * wall // closed front AND back; front is cut down
@@ -173,13 +172,62 @@ function buildSlidingBox(m: BoxModel): BuiltBox {
     zFront - wall / 2 + EPS,
   )
   body = csgSubtract(body, frontMouth)
+
+  // Drop-in landing pocket. Over the front `landing` mm, the side ledges are cut
+  // DOWN by (lidT + c) so the lid drops into a recessed pocket — captured on its
+  // bottom and both inner side steps — instead of having to be balanced on the
+  // thin side ledges in mid-air. The lid lowers flat into the pocket (its top
+  // ends up ~flush with the channel ledge), then slides back: a ramp at the back
+  // of the pocket lifts it up onto the channel ledges as it travels in.
+  const lidW = grooveW - 2 * c
+  const landing = Math.min(Math.max(3, wall), m.innerD / 3) // pocket length in Z
+  const pocketDrop = lidT + c // how far below the channel ledge the pocket floor sits
+  const pocketFloor = grooveBottom - pocketDrop
+  const pocketW = lidW + 2 * c // a touch wider than the lid so it drops in freely
+  const pocketBackZ = zFront - wall - landing // inner end of the pocket
+
+  // Recess the pocket: remove material from the pocket floor up to the top, over
+  // the pocket width and the front landing length.
+  const pocket = box(
+    pocketW,
+    grooveTop - pocketFloor + EPS,
+    landing + EPS,
+    0,
+    pocketFloor + (grooveTop - pocketFloor) / 2 + EPS,
+    zFront - wall - landing / 2 + EPS,
+  )
+  body = csgSubtract(body, pocket)
+
+  // Ramp at the back of the pocket: a 45° wedge per side-ledge zone, rising from
+  // the pocket floor up to the channel ledge so the lid slides up out of the
+  // pocket onto the channel as it travels in, instead of hitting a vertical step.
+  // Built from a triangular prism extruded along X over each ledge zone.
+  const zoneInner = m.innerW / 2
+  const zoneOuter = grooveW / 2
+  const zoneW = zoneOuter - zoneInner // == tongueDepth (the ledge width per side)
+  for (const sx of [-1, 1]) {
+    // Right triangle in the (Z, Y) plane: rises from pocketFloor at the pocket's
+    // inner end up to grooveBottom over a 45° run, vertical back face at the top.
+    const tri = new THREE.Shape()
+    tri.moveTo(pocketBackZ, pocketFloor)            // bottom, pocket-side
+    tri.lineTo(pocketBackZ + pocketDrop, grooveBottom) // up the 45° slope
+    tri.lineTo(pocketBackZ, grooveBottom)           // back down (vertical) to start col
+    tri.closePath()
+    const ext = new THREE.ExtrudeGeometry(tri, { depth: zoneW, bevelEnabled: false })
+    // Shape lives in XY (=here world Z,Y). Extrudes along +Z by `depth`; rotate
+    // that extrusion axis to +X so the prism spans the ledge zone width in X.
+    ext.rotateY(-Math.PI / 2)
+    // After rotateY(-90°): shape's X(→world Z) and Y(→world Y) preserved; the
+    // depth that went +Z now goes -X, starting at X=0. Shift to the ledge zone.
+    ext.translate(sx > 0 ? zoneOuter : zoneInner, 0, 0)
+    body = csgAdd(body, weld(ext))
+  }
   void zBack
 
   body = weld(body)
   body.computeBoundingBox()
 
   // --- Lid: flat panel sized to slide in the grooves with clearance ---------
-  const lidW = grooveW - 2 * c
   const lidLen = m.innerD + tongueDepth - c // seats against back, flush at front
   const lidY = grooveBottom + c + lidT / 2
 
@@ -253,7 +301,11 @@ function buildHingedBox(m: BoxModel): BuiltBox {
   const boreGap = Math.max(0.25, c + 0.05) // pin→bore clearance (research: 0.2–0.3)
   const barrelR = pinR + boreGap + Math.max(1.0, wall * 0.5) // knuckle outer radius
   const axisY = barrelR // axis height so barrels rest on the plate
-  const axisZ = zBack - barrelR + EPS // just behind the box back wall
+  // Hinge axis sits behind the box back wall by the full barrel radius + a
+  // clearance, so the LID knuckle barrels (which reach forward to axisZ+barrelR)
+  // never touch the box back wall — otherwise they fuse to it (a 0.05mm graze is
+  // enough) and the hinge won't open. Box knuckles bridge the gap via their web.
+  const axisZ = zBack - barrelR - c
 
   const knuckleCount = 5
   const knuckleW = m.innerW / knuckleCount // along X
@@ -306,24 +358,33 @@ function buildHingedBox(m: BoxModel): BuiltBox {
   // Overlapping-lip lid: panel + a downward rim that, when closed, wraps the
   // outside of the box walls. Modelled flat: panel on the plate extending −Z
   // from the hinge, lip pointing up (becomes downward when folded over).
+  //
+  // CRITICAL: only the lid knuckles + pin may enter the hinge axis zone (they
+  // interleave with the box knuckles in the X-gaps). The full-width panel and
+  // lip rails MUST stop a clearance behind the box's rearmost hinge material
+  // (the barrels reach back to axisZ - barrelR), or they fuse the lid to the
+  // box knuckle barrels and the hinge won't move. lidHingeEdgeZ is that plane.
   const lipWall = Math.max(1, wall * 0.6)
+  const lidHingeEdgeZ = axisZ - barrelR - c // panel/lip front edge: clears box barrels
   const lidPanelW = outerW + 2 * (c + lipWall) // covers walls + lip
-  const lidPanelD = outerD + (c + lipWall) // covers front + sides when closed
-  // Panel sits flat at plate level, its hinge edge meeting the knuckle axis.
-  const lidPanelZcenter = axisZ - lidPanelD / 2
+  // Panel runs from its hinge edge back far enough to cover the closed box.
+  const lidPanelD = outerD + (c + lipWall)
+  const lidPanelZcenter = lidHingeEdgeZ - lidPanelD / 2
   let lid = box(lidPanelW, lidT, lidPanelD, 0, lidT / 2, lidPanelZcenter)
 
-  // Lid knuckles: solid barrels fused to the pin AND to the lid panel front edge.
+  // Lid knuckles: solid barrels fused to the pin AND bridged back to the panel
+  // hinge edge by connectors. Connectors live only in the lid X-bands (width
+  // knuckleW - kGap), so they pass between the box knuckles without touching.
   let lidKnuckle = knuckles.lid.length ? csgAdd(...knuckles.lid) : null
   if (lidKnuckle) {
     lidKnuckle = csgAdd(lidKnuckle, pin)
-    // connect each lid knuckle to the lid panel hinge edge
+    // Bridge each lid knuckle (at axisZ) back to the panel hinge edge.
+    const connZ = (axisZ + lidHingeEdgeZ) / 2
+    const connLen = Math.abs(axisZ - lidHingeEdgeZ) + EPS
     for (let i = 1; i < knuckleCount; i += 2) {
       const cx = -m.innerW / 2 + knuckleW * (i + 0.5)
       const w = knuckleW - kGap
-      const connZ = (axisZ + (lidPanelZcenter + lidPanelD / 2)) / 2
-      const conn = box(w, lidT, Math.abs(axisZ - (lidPanelZcenter + lidPanelD / 2)) + EPS,
-        cx, lidT / 2, connZ)
+      const conn = box(w, lidT, connLen, cx, lidT / 2, connZ)
       lidKnuckle = csgAdd(lidKnuckle, conn)
     }
     lid = csgAdd(lid, lidKnuckle)
@@ -333,7 +394,9 @@ function buildHingedBox(m: BoxModel): BuiltBox {
   }
 
   // Downward lip rim around the 3 non-hinge edges (front, left, right). Modelled
-  // pointing +Y from the panel; folds to wrap the box outside when closed.
+  // pointing +Y from the panel; folds to wrap the box outside when closed. The
+  // side rails run only along the panel (front edge → hinge edge), NOT into the
+  // hinge axis zone, so they never reach the box barrels.
   const lipH = Math.max(2, m.innerH * 0.15)
   const lipFrontZ = lidPanelZcenter - lidPanelD / 2 + lipWall / 2
   lid = csgAdd(lid, box(lidPanelW, lipH + lidT, lipWall, 0, (lipH + lidT) / 2, lipFrontZ))
