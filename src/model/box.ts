@@ -98,47 +98,54 @@ function buildSlidingBox(m: BoxModel): BuiltBox {
   const c = m.clearance
   const lidT = m.lidThickness
 
-  // The lid is the TOP of the box: it slides into slots cut into the top inner
-  // edge of the left/right walls. Build cross-section bottom→top:
+  // The lid is the TOP of the box, captured in a DOVETAIL channel cut into the
+  // top inner edge of the left/right walls. The channel roof is a 45° chamfer,
+  // NOT a flat overhang — a flat roof prints as an unsupported overhang and the
+  // slicer drops it, leaving the lid unretained. A 45° face is self-supporting,
+  // and the lid's tongues carry a matching chamfer so the lid can't lift out.
+  // It slides in from the open front and butts the closed back wall (the stop).
   //
-  //   groove slot ── lidT + 2c tall, lid rides here, OPEN at top ──┐ (side walls)
-  //   cavity      ── innerH of usable space ───────────────────────┘
-  //   floor       ── wall thick
-  //
-  // The slot is open at the top (no overhanging rail roof — that would print as
-  // an unsupported inward overhang and melt away in the slicer). The lid slides
-  // in from the front and butts the closed back wall; it rests in the side slots
-  // and can be lifted straight out.
+  //   wall cross-section (right side, Y up):
+  //        │outer│        outer wall, full height to grooveTop
+  //        │    ╲         ← 45° roof chamfer (self-supporting overhang)
+  //        │  ╲tongue     lid tongue, chamfered to match, clearance c
+  //        │ ▔▔▔▔▔         ← ledge at grooveBottom (faces up, supports lid)
+  //        │ cavity
 
   const floorH = wall
   const grooveH = lidT + 2 * c // vertical slot the lid rides in
-
-  const cavityBottom = floorH
-  const grooveBottom = cavityBottom + m.innerH
+  const grooveBottom = floorH + m.innerH
   const grooveTop = grooveBottom + grooveH
-  const outerH = grooveTop // box top = top of the lid slot (no rail roof)
+  const outerH = grooveTop // box top = channel roof apex (at the cavity edge)
 
   const outerW = m.innerW + 2 * wall
-  const outerD = m.innerD + 2 * wall // closed front AND back; front is cut down
-
+  const outerD = m.innerD + 2 * wall
   // Centre on X/Z, box on Y=0. +Z = front (lid inserts here), -Z = back (stop).
   const zFront = outerD / 2
-  const zBack = -outerD / 2
 
-  // How far the groove reaches into each side wall (the lid tongue depth).
-  const tongueDepth = Math.min(wall - 0.6, wall * 0.6)
-  const grooveW = m.innerW + 2 * tongueDepth // full width across cavity + into walls
+  const ii = m.innerW / 2 // cavity inner edge (x)
+  // Tongue engagement into each side wall. Capped so the 45° roof chamfer (whose
+  // vertical rise equals this depth) fits within the groove height.
+  const td = Math.min(wall - 0.6, wall * 0.6, grooveH - EPS)
+
+  // Build a solid prism from an (x,y) cross-section extruded along Z (front↔back).
+  const prismZ = (pts: [number, number][], zStart: number, depth: number) => {
+    const s = new THREE.Shape()
+    s.moveTo(pts[0][0], pts[0][1])
+    for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1])
+    s.closePath()
+    const g = new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: false })
+    g.translate(0, 0, zStart)
+    return weld(g)
+  }
 
   // --- Box body ------------------------------------------------------------
-  // Solid outer block, then hollow the cavity, cut the side grooves, and lower
-  // the front wall so the lid can enter.
   let body = box(outerW, outerH, outerD, 0, outerH / 2, 0)
 
-  // Main cavity: innerW × innerH × innerD, closed on all four sides + floor,
-  // open at the top (up through the groove band).
+  // Hollow the cavity (closed on 4 sides + floor, open at the top).
   const cavity = box(
     m.innerW,
-    outerH - floorH + EPS, // from floor up through the top
+    outerH - floorH + EPS,
     m.innerD,
     0,
     floorH + (outerH - floorH) / 2 + EPS,
@@ -146,101 +153,59 @@ function buildSlidingBox(m: BoxModel): BuiltBox {
   )
   body = csgSubtract(body, cavity)
 
-  // Side grooves: widen the opening into the two side walls, only across the
-  // groove height band, running the full depth and out through the FRONT so the
-  // lid slides in. Stops at the inner back face so the lid butts the back wall.
-  const groove = box(
-    grooveW,
-    grooveH,
-    m.innerD + wall + EPS, // from inner back face out through the front wall
-    0,
-    grooveBottom + grooveH / 2,
-    zFront - (m.innerD + wall) / 2 + EPS, // pushed toward the front opening
-  )
-  body = csgSubtract(body, groove)
+  // Cut the dovetail channel into each side wall, from the back inner face out
+  // through the front. Cross-section (right side): ledge along the bottom, outer
+  // wall up the side, then the 45° roof chamfer (edge P2→P3) back to the cavity
+  // edge. Mirror for the left. Runs the full depth so the lid slides in.
+  const grooveDepth = m.innerD + wall + EPS // back inner face → just past front
+  for (const sx of [-1, 1]) {
+    const pts: [number, number][] = [
+      [sx * (ii - EPS), grooveBottom],
+      [sx * (ii + td), grooveBottom],
+      [sx * (ii + td), grooveTop - td],
+      [sx * ii, grooveTop], // chamfer apex at the cavity edge (P2→P3 = 45°)
+      [sx * (ii - EPS), grooveTop],
+    ]
+    body = csgSubtract(body, prismZ(pts, -m.innerD / 2, grooveDepth))
+  }
 
-  // Lower the front wall to the groove bottom so the lid passes over it (the
-  // groove already opened the band; this removes the wall above the cavity at
-  // the front too, giving a clean mouth). Remove front wall from groove-bottom
-  // up across the full inner width.
+  // Open the front over the cavity so the lid panel can enter (the side grooves
+  // already open the tongue path). Remove the front wall above the ledge.
   const frontMouth = box(
     m.innerW + EPS,
     outerH - grooveBottom + EPS,
-    wall + EPS,
+    wall + 2 * EPS, // span the whole front wall (cavity face → outer), no remnant
     0,
     grooveBottom + (outerH - grooveBottom) / 2 + EPS,
-    zFront - wall / 2 + EPS,
+    zFront - wall / 2, // centred on the front wall so both faces are cleared
   )
   body = csgSubtract(body, frontMouth)
-
-  // Drop-in landing pocket. Over the front `landing` mm, the side ledges are cut
-  // DOWN by (lidT + c) so the lid drops into a recessed pocket — captured on its
-  // bottom and both inner side steps — instead of having to be balanced on the
-  // thin side ledges in mid-air. The lid lowers flat into the pocket (its top
-  // ends up ~flush with the channel ledge), then slides back: a ramp at the back
-  // of the pocket lifts it up onto the channel ledges as it travels in.
-  const lidW = grooveW - 2 * c
-  const landing = Math.min(Math.max(3, wall), m.innerD / 3) // pocket length in Z
-  const pocketDrop = lidT + c // how far below the channel ledge the pocket floor sits
-  const pocketFloor = grooveBottom - pocketDrop
-  const pocketW = lidW + 2 * c // a touch wider than the lid so it drops in freely
-  const pocketBackZ = zFront - wall - landing // inner end of the pocket
-
-  // Recess the pocket: remove material from the pocket floor up to the top, over
-  // the pocket width and the front landing length.
-  const pocket = box(
-    pocketW,
-    grooveTop - pocketFloor + EPS,
-    landing + EPS,
-    0,
-    pocketFloor + (grooveTop - pocketFloor) / 2 + EPS,
-    zFront - wall - landing / 2 + EPS,
-  )
-  body = csgSubtract(body, pocket)
-
-  // Ramp at the back of the pocket: a 45° wedge per side-ledge zone, rising from
-  // the pocket floor up to the channel ledge so the lid slides up out of the
-  // pocket onto the channel as it travels in, instead of hitting a vertical step.
-  // Built from a triangular prism extruded along X over each ledge zone.
-  const zoneInner = m.innerW / 2
-  const zoneOuter = grooveW / 2
-  const zoneW = zoneOuter - zoneInner // == tongueDepth (the ledge width per side)
-  for (const sx of [-1, 1]) {
-    // Right triangle in the (Z, Y) plane: rises from pocketFloor at the pocket's
-    // inner end up to grooveBottom over a 45° run, vertical back face at the top.
-    const tri = new THREE.Shape()
-    tri.moveTo(pocketBackZ, pocketFloor)            // bottom, pocket-side
-    tri.lineTo(pocketBackZ + pocketDrop, grooveBottom) // up the 45° slope
-    tri.lineTo(pocketBackZ, grooveBottom)           // back down (vertical) to start col
-    tri.closePath()
-    const ext = new THREE.ExtrudeGeometry(tri, { depth: zoneW, bevelEnabled: false })
-    // Shape lives in XY (=here world Z,Y). Extrudes along +Z by `depth`; rotate
-    // that extrusion axis to +X so the prism spans the ledge zone width in X.
-    ext.rotateY(-Math.PI / 2)
-    // After rotateY(-90°): shape's X(→world Z) and Y(→world Y) preserved; the
-    // depth that went +Z now goes -X, starting at X=0. Shift to the ledge zone.
-    ext.translate(sx > 0 ? zoneOuter : zoneInner, 0, 0)
-    body = csgAdd(body, weld(ext))
-  }
-  void zBack
 
   body = weld(body)
   body.computeBoundingBox()
 
-  // --- Lid: flat panel sized to slide in the grooves with clearance ---------
-  const lidLen = m.innerD + tongueDepth - c // seats against back, flush at front
-  const lidY = grooveBottom + c + lidT / 2
-
-  // Positioned where it sits when closed (for the assembled preview): front
-  // edge flush with the box front, extending back toward the stop.
-  const lidFrontZ = zFront - wall + EPS
-  const lidCenterZ = lidFrontZ - lidLen / 2
-  let lid = box(lidW, lidT, lidLen, 0, lidY, lidCenterZ)
+  // --- Lid: panel + chamfered tongues, slides into the dovetail channel ------
+  // Cross-section mirrors the groove, shrunk by clearance c on the bottom, outer
+  // and roof faces; open on the cavity side where it joins the flat panel. The
+  // tongue's top chamfer (edge [xo,·]→[ii,·]) is parallel to the roof, offset c.
+  const yb = grooveBottom + c // lid bottom, c above the ledge
+  const xo = ii + td - c // tongue outer extent, c inside the groove outer wall
+  const lidPts: [number, number][] = [
+    [xo, yb],
+    [xo, grooveTop - td],
+    [ii, grooveTop - c],
+    [-ii, grooveTop - c],
+    [-xo, grooveTop - td],
+    [-xo, yb],
+  ]
+  // Seats against the back wall, flush with the front; slides in along +Z.
+  let lid = prismZ(lidPts, -m.innerD / 2, m.innerD + wall)
 
   // Finger pull: a small tab projecting from the front edge of the lid to grip.
   const pullW = Math.min(20, m.innerW * 0.4)
   const pullDepth = 5
-  const pull = box(pullW, lidT, pullDepth, 0, lidY, lidFrontZ + pullDepth / 2 - EPS)
+  const pullY = grooveBottom + c + lidT / 2
+  const pull = box(pullW, lidT, pullDepth, 0, pullY, zFront + pullDepth / 2 - EPS)
   lid = csgAdd(lid, pull)
 
   lid = weld(lid)
