@@ -128,6 +128,16 @@ function buildSlidingBox(m: BoxModel): BuiltBox {
   // vertical rise equals this depth) fits within the groove height.
   const td = Math.min(wall - 0.6, wall * 0.6, grooveH - EPS)
 
+  // Click detent: a rounded ridge on each side ledge, a few mm from the back,
+  // that snaps into a matching dimple in the lid tongue at full closure. As the
+  // lid slides the last few mm home the ridge cams against the flat tongue
+  // underside (the lid flexes over it) then drops into the dimple — a click —
+  // and to slide back out it must climb over the ridge again (a little force).
+  const detentR = Math.min(0.6, td * 0.5, lidT * 0.3) // ridge radius
+  const detentXlen = Math.max(1, td - 2 * c) // length along X, stays under tongue
+  const detentZ = -m.innerD / 2 + Math.min(5, Math.max(3, m.innerD * 0.06)) // near back
+  const detentCx = ii + td / 2 // centred on each side ledge (mirror with sx)
+
   // Build a solid prism from an (x,y) cross-section extruded along Z (front↔back).
   const prismZ = (pts: [number, number][], zStart: number, depth: number) => {
     const s = new THREE.Shape()
@@ -181,6 +191,13 @@ function buildSlidingBox(m: BoxModel): BuiltBox {
   )
   body = csgSubtract(body, frontMouth)
 
+  // Detent ridges: a rounded bump on each side ledge (centred at y=grooveBottom
+  // so it half-embeds in the ledge and protrudes detentR-c above the tongue
+  // underside). The lid's dimple nests over these when shut.
+  for (const sx of [-1, 1]) {
+    body = csgAdd(body, cylinderX(detentR, detentXlen, sx * detentCx, grooveBottom, detentZ))
+  }
+
   body = weld(body)
   body.computeBoundingBox()
 
@@ -207,6 +224,14 @@ function buildSlidingBox(m: BoxModel): BuiltBox {
   const pullY = grooveBottom + c + lidT / 2
   const pull = box(pullW, lidT, pullDepth, 0, pullY, zFront + pullDepth / 2 - EPS)
   lid = csgAdd(lid, pull)
+
+  // Detent dimples: scallop the tongue underside so the box ridges nest in when
+  // shut (radius a touch larger than the ridge for a clean snap fit). Centred at
+  // y=grooveBottom (below the tongue) so only the top of the cut removes tongue
+  // material, leaving a shallow pocket the ridge clicks into.
+  for (const sx of [-1, 1]) {
+    lid = csgSubtract(lid, cylinderX(detentR + 0.15, detentXlen + 2 * c, sx * detentCx, grooveBottom, detentZ))
+  }
 
   lid = weld(lid)
   lid.computeBoundingBox()
