@@ -175,7 +175,7 @@ function buildMount(m: SkadisModel): THREE.BufferGeometry[] {
   const plateT = Math.max(3, wall * 1.5)
   const mountH = height
   const boardBackZ = plateBackZ - SKADIS.boardThickness // far (back) face of the board
-  const armFrontZ = plateBackZ + EPS // hooks start slightly embedded in the plate
+  const armFrontZ = plateBackZ + plateT - EPS // peg roots nearly through the plate (strong joint)
 
   // Hook grid: columns on 40mm centres across the width, ≥1.
   const cols = Math.max(1, Math.floor(width / SKADIS.holePitch))
@@ -228,21 +228,30 @@ function hookParts(
     return out
   }
 
-  // snap / clip: a thin peg through the slot (rests on the slot's bottom edge
-  // under load) plus a catch that drops behind the solid board below the slot.
-  // clip drops deeper and sits snug to the board back for a more positive lock;
-  // snap keeps a clearance gap so it's easy to take on and off.
+  // snap / clip: a thin peg threads the slot and reaches behind the board; a
+  // catch hangs off the peg's rear and drops behind the SOLID board below the
+  // slot. The catch spans the peg's FULL height and the peg reaches just past
+  // the catch's back, so the two interpenetrate into one solid L — not an
+  // edge-to-edge touch (which would snap off). clip drops deeper and sits snug
+  // to the board back for a positive lock; snap keeps a clearance gap for easy
+  // on/off.
   const strong = style === 'clip'
   const armThk = 3.5 // peg height (Y); leaves room in the 15mm slot to drop-engage
   const catchT = 2.4 // catch thickness behind the board (Z)
-  const catchDrop = strong ? 9 : 5 // deeper overlap with the solid board = stronger
+  const catchDrop = strong ? 9 : 5 // reach below the peg = overlap with the solid board
   const gap = strong ? 0 : clearance // clip grips the board back snugly
-  const pegBackZ = boardBackZ - gap // peg tip just behind the board back
 
+  const catchFrontZ = boardBackZ - gap // catch face, just behind the board back
+  const catchBackZ = catchFrontZ - catchT
+  const pegBackZ = catchBackZ - EPS // peg reaches just past the catch → solid corner
+
+  // Peg: plate root → behind the board, at slot height.
   out.push(box(hookW, armThk, armFrontZ - pegBackZ, hx, rowY, (armFrontZ + pegBackZ) / 2))
-  const catchCz = pegBackZ - catchT / 2 // catch body sits behind the board
-  const catchCy = rowY - armThk / 2 - catchDrop / 2 + EPS
-  out.push(box(hookW, catchDrop, catchT, hx, catchCy, catchCz))
+  // Catch: spans the peg's full height (top flush with the peg top) then drops
+  // below to hook the board, overlapping the peg solidly over its whole depth.
+  const catchH = armThk + catchDrop
+  const catchTopY = rowY + armThk / 2
+  out.push(box(hookW, catchH, catchT, hx, catchTopY - catchH / 2, (catchFrontZ + catchBackZ) / 2))
   return out
 }
 
