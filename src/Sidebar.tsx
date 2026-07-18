@@ -7,7 +7,7 @@ import {
   resolvedSize,
 } from './model/types'
 import { BoxModel } from './model/box'
-import { SkadisModel, HolderShape } from './model/skadis'
+import { SkadisModel, HolderShape, HookStyle } from './model/skadis'
 import { Design, ObjectType, assertNever } from './model/serialize'
 import {
   export3MF,
@@ -419,6 +419,11 @@ function SkadisControls({
     { id: 'rounded', label: 'Rounded' },
     { id: 'round', label: 'Round' },
   ]
+  const hooks: { id: HookStyle; label: string }[] = [
+    { id: 'peg', label: 'Peg' },
+    { id: 'snap', label: 'Snap' },
+    { id: 'clip', label: 'Clip' },
+  ]
   const open = model.bottom === 'open'
 
   return (
@@ -505,6 +510,43 @@ function SkadisControls({
         </p>
       </Section>
 
+      <Section title="Mount" defaultOpen>
+        <div className="seg-head">
+          <span>Hook style</span>
+          <InfoDot
+            text={
+              <>
+                <b>Peg</b> — a peg that friction-fits the slot. Lightest hold, lifts straight off,
+                simplest to print.<br />
+                <b>Snap</b> — peg plus a catch that drops behind the solid board below the slot. A
+                positive everyday hold; easy on and off.<br />
+                <b>Clip</b> — like Snap but the catch drops deeper and grips the board back snugly for
+                the strongest, most positive lock.<br />
+                All three print upright and seat flush; the hook fit is tuned by the clearance below.
+              </>
+            }
+          />
+        </div>
+        <div className="seg">
+          {hooks.map((h) => (
+            <button
+              key={h.id}
+              className={model.hookStyle === h.id ? 'active' : ''}
+              onClick={() => patch({ hookStyle: h.id })}
+            >
+              {h.label}
+            </button>
+          ))}
+        </div>
+        <p className="hint">
+          {model.hookStyle === 'peg'
+            ? 'Friction peg: lightest hold, lifts straight off. Best for light items.'
+            : model.hookStyle === 'snap'
+              ? 'Snap hook: catch behind the board below the slot. Solid everyday hold, easy on/off.'
+              : 'Wrap clip: deeper, snug catch for the strongest, most positive hold.'}
+        </p>
+      </Section>
+
       <Section title="Construction" defaultOpen>
         <Toggle label="Show Build Plate" checked={showBuildPlate} onChange={setShowBuildPlate} />
         <Field label="Wall thickness">
@@ -524,6 +566,16 @@ function SkadisControls({
 }
 
 // ---------- shared presentational components ----------
+
+// A small "ⓘ" badge that reveals a tooltip on hover/focus (CSS-driven). Used to
+// explain multi-option choices inline without cluttering the panel.
+function InfoDot({ text }: { text: React.ReactNode }) {
+  return (
+    <span className="info" tabIndex={0}>
+      i<span className="info-pop">{text}</span>
+    </span>
+  )
+}
 
 function Measurements({
   size, fmtLen, inches, setInches,

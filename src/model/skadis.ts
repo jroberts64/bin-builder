@@ -31,6 +31,17 @@ export const SKADIS = {
 
 export type HolderShape = 'rect' | 'rounded' | 'round'
 
+// How the back hooks grip the pegboard. All three print upright (the same
+// orientation the holder is used in) and leave the board channel clear so the
+// back plate seats flush; they trade holding strength for simplicity:
+//   'peg'  — a peg that friction-fits the slot. Lightest hold, lifts straight
+//            off, nothing to catch. Simplest to print.
+//   'snap' — peg + a catch that drops behind the solid board below the slot.
+//            A positive, everyday hold.
+//   'clip' — peg + catch + a toe under the slot's bottom edge, gripping the
+//            board on three sides. Strongest / most positive.
+export type HookStyle = 'peg' | 'snap' | 'clip'
+
 export interface SkadisModel {
   shape: HolderShape
   width: number // mm, X outer (diameter for round; W≠D → ellipse)
@@ -42,6 +53,7 @@ export interface SkadisModel {
   bottom: 'full' | 'open'
   supportLip: number // mm, inward rim shelf width when bottom = 'open'
   openingDeg: number // front opening angle in degrees (0 = fully enclosed)
+  hookStyle: HookStyle // how the back hooks grip the pegboard
   clearance: number // mm, Skadis hook fit
 }
 
@@ -57,6 +69,7 @@ export function defaultSkadis(): SkadisModel {
     bottom: 'full',
     supportLip: 4,
     openingDeg: 0,
+    hookStyle: 'clip',
     clearance: 0.4,
   }
 }
@@ -141,40 +154,28 @@ function box(w: number, h: number, d: number, cx: number, cy: number, cz: number
   return g
 }
 
-// A prism whose cross-section is a polygon in the (Z,Y) plane, extruded along X.
-// `pts` are [worldZ, worldY]; the solid spans X ∈ [xCenter-xLen/2, xCenter+xLen/2].
-// Used for the 45° hook gussets. Local shape X→world -Z, local Y→world Y; after
-// extruding along +Z we rotate that axis onto +X.
-function prismX(pts: [number, number][], xCenter: number, xLen: number): THREE.BufferGeometry {
-  const s = new THREE.Shape()
-  s.moveTo(-pts[0][0], pts[0][1])
-  for (let i = 1; i < pts.length; i++) s.lineTo(-pts[i][0], pts[i][1])
-  s.closePath()
-  const g = new THREE.ExtrudeGeometry(s, { depth: xLen, bevelEnabled: false })
-  g.rotateY(Math.PI / 2) // extrude axis +Z → +X (now x ∈ [0, xLen])
-  g.translate(xCenter - xLen / 2, 0, 0)
-  return weld(g)
-}
-
 // --- mount ----------------------------------------------------------------
 
 // Back plate + hooks, fused to the container's back. The plate rests flat on the
-// board (its back face is the board contact plane at z = -depth/2); each hook is
-// a peg through a slot plus a downward catch that hooks the board behind the
-// slot, with a 45° gusset so the peg prints self-supported in the upright
-// orientation. Hooks sit on the 40mm grid.
+// board (its back face is the board contact plane at z = -depth/2) and hooks sit
+// on the 40mm grid. Everything behind the plate stays OUT of the board channel
+// (the z gap between the plate face and the board back) except the peg, which
+// threads the slot — so the plate always seats flush. `hookStyle` picks how the
+// hook grips (see HookStyle); `hookParts` builds one hook.
 function buildMount(m: SkadisModel): THREE.BufferGeometry[] {
-  const { width, depth, height, wall, clearance } = m
+  const { width, depth, height, wall, clearance, hookStyle } = m
   const parts: THREE.BufferGeometry[] = []
 
-  const plateBackZ = -depth / 2 // board contact plane
+  const plateBackZ = -depth / 2 // board contact plane (board front face here)
   const plateT = Math.max(3, wall * 1.5)
   const mountH = height
+  const boardBackZ = plateBackZ - SKADIS.boardThickness // far (back) face of the board
+  const armFrontZ = plateBackZ + EPS // hooks start slightly embedded in the plate
 
   // Hook grid: columns on 40mm centres across the width, ≥1.
   const cols = Math.max(1, Math.floor(width / SKADIS.holePitch))
   const colSpan = (cols - 1) * SKADIS.holePitch
-  const hookW = Math.max(2, SKADIS.slotW - clearance) // fits the 5mm slot
+  const hookW = Math.max(2, SKADIS.slotW - clearance) // fits the 5mm slot width
   const plateW = Math.max(width, colSpan + hookW + 6)
 
   // Rows: top row a little below the mouth; a second row 40mm down when tall
@@ -188,42 +189,56 @@ function buildMount(m: SkadisModel): THREE.BufferGeometry[] {
   // wouldn't be manifold-safe).
   parts.push(box(plateW, mountH, plateT, 0, mountH / 2, plateBackZ + plateT / 2))
 
-  const armThk = 4 // peg height (Y); must clear the 15mm slot
-  const catchT = 2.4 // catch depth behind the board (Z)
-  const catchDrop = 6 // how far the catch hooks down (Y)
-  const boardBackZ = plateBackZ - SKADIS.boardThickness // far face of the board
-  const armFrontZ = plateBackZ + EPS // slight embed into the plate
-  const armBackZ = boardBackZ - clearance - catchT // reaches just past the board
-  const armLenZ = armFrontZ - armBackZ
-  const armCz = (armFrontZ + armBackZ) / 2
-
   for (const rowY of rowYs) {
     for (let i = 0; i < cols; i++) {
       const hx = -colSpan / 2 + i * SKADIS.holePitch
-      // Peg through the slot.
-      parts.push(box(hookW, armThk, armLenZ, hx, rowY, armCz))
-      // Downward catch behind the board.
-      const catchCz = armBackZ + catchT / 2
-      parts.push(
-        box(hookW, catchDrop, catchT, hx, rowY - armThk / 2 - catchDrop / 2 + EPS, catchCz),
-      )
-      // 45° gusset under the peg (plate side) so the overhang prints supportless.
-      const leg = Math.min(SKADIS.boardThickness, catchDrop)
-      const yUnder = rowY - armThk / 2 + EPS
-      parts.push(
-        prismX(
-          [
-            [plateBackZ + EPS, yUnder],
-            [plateBackZ + EPS - leg, yUnder],
-            [plateBackZ + EPS, yUnder - leg],
-          ],
-          hx,
-          hookW,
-        ),
-      )
+      parts.push(...hookParts(hookStyle, hx, rowY, armFrontZ, boardBackZ, hookW, clearance))
     }
   }
   return parts
+}
+
+// One hook's solids. The board can only be gripped between the plate (front) and
+// a catch reaching behind the SOLID board below the slot — the board is a
+// continuous sheet, so there's nowhere in front of it to hook except the slot
+// itself. The three styles trade holding strength for simplicity; none reaches
+// into the board channel except the peg (which threads the slot).
+function hookParts(
+  style: HookStyle,
+  hx: number,
+  rowY: number,
+  armFrontZ: number,
+  boardBackZ: number,
+  hookW: number,
+  clearance: number,
+): THREE.BufferGeometry[] {
+  const out: THREE.BufferGeometry[] = []
+
+  if (style === 'peg') {
+    // Friction peg: nearly fills the slot height and pokes just past the board
+    // back. Held by friction; no catch, so it lifts straight off.
+    const pegH = Math.max(3, SKADIS.slotH - 2 * clearance)
+    const pegBackZ = boardBackZ - 1 // 1mm proud of the board back
+    out.push(box(hookW, pegH, armFrontZ - pegBackZ, hx, rowY, (armFrontZ + pegBackZ) / 2))
+    return out
+  }
+
+  // snap / clip: a thin peg through the slot (rests on the slot's bottom edge
+  // under load) plus a catch that drops behind the solid board below the slot.
+  // clip drops deeper and sits snug to the board back for a more positive lock;
+  // snap keeps a clearance gap so it's easy to take on and off.
+  const strong = style === 'clip'
+  const armThk = 3.5 // peg height (Y); leaves room in the 15mm slot to drop-engage
+  const catchT = 2.4 // catch thickness behind the board (Z)
+  const catchDrop = strong ? 9 : 5 // deeper overlap with the solid board = stronger
+  const gap = strong ? 0 : clearance // clip grips the board back snugly
+  const pegBackZ = boardBackZ - gap // peg tip just behind the board back
+
+  out.push(box(hookW, armThk, armFrontZ - pegBackZ, hx, rowY, (armFrontZ + pegBackZ) / 2))
+  const catchCz = pegBackZ - catchT / 2 // catch body sits behind the board
+  const catchCy = rowY - armThk / 2 - catchDrop / 2 + EPS
+  out.push(box(hookW, catchDrop, catchT, hx, catchCy, catchCz))
+  return out
 }
 
 // --- main build -----------------------------------------------------------

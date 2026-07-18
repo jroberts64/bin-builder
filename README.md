@@ -25,6 +25,9 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
   - **Front opening** — open the front by a chosen angle (a clean arc on round
     shapes, a V-notch on rectangular ones).
   - **Open bottom** — drop the floor to a support-lip rim shelf of a set width.
+  - **Hook style** — pick how the back hooks grip, from a light **friction peg**
+    to a **snap** catch to a strong **wrap clip** (with an inline ℹ️ explaining
+    each). All seat the plate flush against the board.
   - Exports as one fused part; hook fit follows the ~0.2–0.4mm FDM sweet spot.
 - **Gridfinity toggle** — switch the Gridfinity foot, baseplate clearance and
   magnet/screw sockets on or off. Off = a plain flat-bottomed tray. Independent

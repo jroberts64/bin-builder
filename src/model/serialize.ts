@@ -1,6 +1,6 @@
 import { BinModel, Divider, LipStyle, SocketStyle, defaultBin } from './types'
 import { BoxModel, defaultBox } from './box'
-import { SkadisModel, HolderShape, defaultSkadis } from './skadis'
+import { SkadisModel, HolderShape, HookStyle, defaultSkadis } from './skadis'
 
 // Versioned (de)serialization for a design. Everything that persists or shares —
 // localStorage, .json files, share URLs — goes through here so there is exactly
@@ -96,6 +96,7 @@ export function coerceBox(raw: unknown): BoxModel {
 }
 
 const HOLDER_SHAPES: HolderShape[] = ['rect', 'rounded', 'round']
+const HOOK_STYLES: HookStyle[] = ['peg', 'snap', 'clip']
 
 // Turn arbitrary parsed JSON into a guaranteed-valid SkadisModel.
 export function coerceSkadis(raw: unknown): SkadisModel {
@@ -112,6 +113,7 @@ export function coerceSkadis(raw: unknown): SkadisModel {
     bottom: oneOf(m.bottom, ['full', 'open'], d.bottom),
     supportLip: num(m.supportLip, d.supportLip, 0, 40),
     openingDeg: num(m.openingDeg, d.openingDeg, 0, 300),
+    hookStyle: oneOf(m.hookStyle, HOOK_STYLES, d.hookStyle),
     clearance: num(m.clearance, d.clearance, 0, 1),
   }
 }
