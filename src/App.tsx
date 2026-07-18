@@ -3,8 +3,9 @@ import Viewport from './Viewport'
 import Sidebar from './Sidebar'
 import { BinModel, resolvedSize } from './model/types'
 import { BoxModel, boxOuterSize } from './model/box'
+import { SkadisModel, skadisOuterSize } from './model/skadis'
 import { initCSG } from './model/csg'
-import { Design, ObjectType, defaultDesign, readShareUrl } from './model/serialize'
+import { Design, ObjectType, assertNever, defaultDesign, readShareUrl } from './model/serialize'
 import { readAutosave, writeAutosave } from './model/storage'
 
 // Initial design, resolved once: a shared ?d= URL wins, then the autosave slot,
@@ -39,6 +40,7 @@ export default function App() {
   // Per-type model setters that update the active model within the design.
   const setBin = (bin: BinModel) => setDesign((d) => ({ ...d, bin }))
   const setBox = (box: BoxModel) => setDesign((d) => ({ ...d, box }))
+  const setSkadis = (skadis: SkadisModel) => setDesign((d) => ({ ...d, skadis }))
   const setType = (type: ObjectType) => {
     setDesign((d) => ({ ...d, type }))
     setFitSignal((s) => s + 1)
@@ -50,10 +52,18 @@ export default function App() {
     setFitSignal((s) => s + 1)
   }
 
-  const size = useMemo(
-    () => (design.type === 'bin' ? resolvedSize(design.bin) : boxOuterSize(design.box)),
-    [design],
-  )
+  const size = useMemo(() => {
+    switch (design.type) {
+      case 'bin':
+        return resolvedSize(design.bin)
+      case 'box':
+        return boxOuterSize(design.box)
+      case 'skadis':
+        return skadisOuterSize(design.skadis)
+      default:
+        return assertNever(design.type)
+    }
+  }, [design])
 
   return (
     <div className="app">
@@ -61,6 +71,7 @@ export default function App() {
         design={design}
         setBin={setBin}
         setBox={setBox}
+        setSkadis={setSkadis}
         setType={setType}
         showBuildPlate={showBuildPlate}
         setShowBuildPlate={setShowBuildPlate}

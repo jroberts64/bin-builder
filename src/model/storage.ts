@@ -32,6 +32,7 @@ function readAll(): StoredDesign[] {
           type: design.type,
           bin: design.bin,
           box: design.box,
+          skadis: design.skadis,
         }
       })
   } catch {

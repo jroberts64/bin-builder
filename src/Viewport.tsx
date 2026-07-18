@@ -3,7 +3,8 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildBin } from './model/geometry'
 import { buildBox } from './model/box'
-import { Design } from './model/serialize'
+import { buildSkadis } from './model/skadis'
+import { Design, assertNever } from './model/serialize'
 
 interface Props {
   design: Design
@@ -111,13 +112,22 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
       disposeParts()
       const group = new THREE.Group()
       try {
-        if (design.type === 'bin') {
-          group.add(new THREE.Mesh(buildBin(design.bin).geometry, mat(0x4a9eff)))
-        } else {
-          const { box, lid } = buildBox(design.box)
-          group.add(new THREE.Mesh(box, mat(0x4a9eff)))
-          // Lid slightly lighter so it's distinguishable in the assembled view.
-          group.add(new THREE.Mesh(lid, mat(0x8ec5ff)))
+        switch (design.type) {
+          case 'bin':
+            group.add(new THREE.Mesh(buildBin(design.bin).geometry, mat(0x4a9eff)))
+            break
+          case 'box': {
+            const { box, lid } = buildBox(design.box)
+            group.add(new THREE.Mesh(box, mat(0x4a9eff)))
+            // Lid slightly lighter so it's distinguishable in the assembled view.
+            group.add(new THREE.Mesh(lid, mat(0x8ec5ff)))
+            break
+          }
+          case 'skadis':
+            group.add(new THREE.Mesh(buildSkadis(design.skadis).geometry, mat(0x4a9eff)))
+            break
+          default:
+            assertNever(design.type)
         }
       } catch (err) {
         console.error('build failed', err)

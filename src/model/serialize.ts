@@ -1,16 +1,30 @@
 import { BinModel, Divider, LipStyle, SocketStyle, defaultBin } from './types'
 import { BoxModel, defaultBox } from './box'
+import { SkadisModel, HolderShape, defaultSkadis } from './skadis'
 
 // Versioned (de)serialization for a design. Everything that persists or shares —
 // localStorage, .json files, share URLs — goes through here so there is exactly
 // one place that validates untrusted input and handles schema drift.
 //
-// A design is one of two object types: a Gridfinity-style bin, or a sliding-lid
-// box. The envelope carries the type plus the matching model.
+// A design is one of the known object types (a Gridfinity-style bin, or a box).
+// The envelope carries the type plus every model, so toggling type is lossless.
 
 export const SCHEMA_VERSION = 2
 
-export type ObjectType = 'bin' | 'box'
+export type ObjectType = 'bin' | 'box' | 'skadis'
+
+// The single source of truth for the set of object types. Iterate this to build
+// UI/validation instead of hardcoding the members, and pair every `switch` on an
+// ObjectType with `assertNever` in its default so adding a member to the union
+// turns each unhandled dispatch into a compile error (the checklist for a new
+// type — see the "Adding a third object type" recipe in CLAUDE.md).
+export const OBJECT_TYPES: readonly ObjectType[] = ['bin', 'box', 'skadis']
+
+// Exhaustiveness guard. Reaching it means an ObjectType was added without
+// updating this dispatch; the `never` parameter makes that a compile error.
+export function assertNever(x: never): never {
+  throw new Error(`Unhandled object type: ${String(x)}`)
+}
 
 // A live design in the app: the active object type plus both models (so toggling
 // type preserves each one's settings).
@@ -18,10 +32,11 @@ export interface Design {
   type: ObjectType
   bin: BinModel
   box: BoxModel
+  skadis: SkadisModel
 }
 
 export function defaultDesign(): Design {
-  return { type: 'bin', bin: defaultBin(), box: defaultBox() }
+  return { type: 'bin', bin: defaultBin(), box: defaultBox(), skadis: defaultSkadis() }
 }
 
 export interface SavedDesign {
@@ -30,6 +45,7 @@ export interface SavedDesign {
   type: ObjectType
   bin: BinModel
   box: BoxModel
+  skadis: SkadisModel
 }
 
 const LIPS: LipStyle[] = ['default', 'thin', 'none']
@@ -79,6 +95,27 @@ export function coerceBox(raw: unknown): BoxModel {
   }
 }
 
+const HOLDER_SHAPES: HolderShape[] = ['rect', 'rounded', 'round']
+
+// Turn arbitrary parsed JSON into a guaranteed-valid SkadisModel.
+export function coerceSkadis(raw: unknown): SkadisModel {
+  const d = defaultSkadis()
+  const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<SkadisModel>
+  return {
+    shape: oneOf(m.shape, HOLDER_SHAPES, d.shape),
+    width: num(m.width, d.width, 15, 300),
+    depth: num(m.depth, d.depth, 15, 300),
+    height: num(m.height, d.height, 15, 300),
+    cornerRadius: num(m.cornerRadius, d.cornerRadius, 0, 60),
+    wall: num(m.wall, d.wall, 1, 6),
+    taper: num(m.taper, d.taper, 30, 100),
+    bottom: oneOf(m.bottom, ['full', 'open'], d.bottom),
+    supportLip: num(m.supportLip, d.supportLip, 0, 40),
+    openingDeg: num(m.openingDeg, d.openingDeg, 0, 300),
+    clearance: num(m.clearance, d.clearance, 0, 1),
+  }
+}
+
 // Turn arbitrary parsed JSON into a guaranteed-valid BinModel. Unknown or
 // out-of-range fields snap to the defaults.
 export function coerceModel(raw: unknown): BinModel {
@@ -111,19 +148,31 @@ export function coerceModel(raw: unknown): BinModel {
 //   - bare bin model object (oldest/loosest)
 export function coerceDesign(raw: unknown): Design {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
-  if ('type' in o && (o.type === 'bin' || o.type === 'box')) {
-    return { type: o.type, bin: coerceModel(o.bin), box: coerceBox(o.box) }
+  if ('type' in o && OBJECT_TYPES.includes(o.type as ObjectType)) {
+    return {
+      type: o.type as ObjectType,
+      bin: coerceModel(o.bin),
+      box: coerceBox(o.box),
+      skadis: coerceSkadis(o.skadis),
+    }
   }
   if ('model' in o) {
-    return { type: 'bin', bin: coerceModel(o.model), box: defaultBox() }
+    return { type: 'bin', bin: coerceModel(o.model), box: defaultBox(), skadis: defaultSkadis() }
   }
-  return { type: 'bin', bin: coerceModel(raw), box: defaultBox() }
+  return { type: 'bin', bin: coerceModel(raw), box: defaultBox(), skadis: defaultSkadis() }
 }
 
 // --- public API ---
 
 export function serializeDesign(design: Design, name?: string): SavedDesign {
-  return { v: SCHEMA_VERSION, name, type: design.type, bin: design.bin, box: design.box }
+  return {
+    v: SCHEMA_VERSION,
+    name,
+    type: design.type,
+    bin: design.bin,
+    box: design.box,
+    skadis: design.skadis,
+  }
 }
 
 // Accepts a SavedDesign envelope OR looser/legacy inputs.

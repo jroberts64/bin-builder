@@ -3,8 +3,10 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { BinModel } from './types'
 import { BoxModel } from './box'
+import { SkadisModel } from './skadis'
 import { buildBin } from './geometry'
 import { buildBox } from './box'
+import { buildSkadis } from './skadis'
 
 // Models are Y-up in the viewport (sitting on Y=0); slicers expect Z-up.
 // Rotating +90° about X maps +Y -> +Z (y'=-z, z'=y), keeping parts upright.
@@ -26,6 +28,20 @@ function exportGeometry(model: BinModel): THREE.BufferGeometry {
 
 export function exportSTL(model: BinModel): Blob {
   return geometryToSTL(exportGeometry(model))
+}
+
+// --- Skadis holder: one fused mesh (container + hooks), like the bin --------
+
+function skadisExportGeometry(model: SkadisModel): THREE.BufferGeometry {
+  return toZUp(buildSkadis(model).geometry)
+}
+
+export function exportSkadisSTL(model: SkadisModel): Blob {
+  return geometryToSTL(skadisExportGeometry(model))
+}
+
+export function exportSkadis3MF(model: SkadisModel): Blob {
+  return geometryToBlob3MF(skadisExportGeometry(model))
 }
 
 // --- Sliding-lid box: box body + lid as TWO separate objects, laid out side by

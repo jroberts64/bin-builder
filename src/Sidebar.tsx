@@ -7,12 +7,15 @@ import {
   resolvedSize,
 } from './model/types'
 import { BoxModel } from './model/box'
-import { Design, ObjectType } from './model/serialize'
+import { SkadisModel, HolderShape } from './model/skadis'
+import { Design, ObjectType, assertNever } from './model/serialize'
 import {
   export3MF,
   exportSTL,
   exportBox3MF,
   exportBoxSTL,
+  exportSkadisSTL,
+  exportSkadis3MF,
   downloadBlob,
 } from './model/export'
 import SaveMenu from './SaveMenu'
@@ -21,6 +24,7 @@ interface Props {
   design: Design
   setBin: (m: BinModel) => void
   setBox: (m: BoxModel) => void
+  setSkadis: (m: SkadisModel) => void
   setType: (t: ObjectType) => void
   showBuildPlate: boolean
   setShowBuildPlate: (v: boolean) => void
@@ -32,10 +36,21 @@ interface Props {
 
 let dividerSeq = 0
 
+// The object-type switch, driven by data so a new type is one row here plus a
+// case in the export/controls dispatch below (the compiler flags both via
+// assertNever). "Box" covers both sliding and hinged lids — the lid style is a
+// sub-choice inside BoxControls, not a top-level type.
+const TYPE_TABS: { id: ObjectType; label: string }[] = [
+  { id: 'bin', label: 'Bin' },
+  { id: 'box', label: 'Box' },
+  { id: 'skadis', label: 'Skadis' },
+]
+
 export default function Sidebar({
   design,
   setBin,
   setBox,
+  setSkadis,
   setType,
   showBuildPlate,
   setShowBuildPlate,
@@ -44,31 +59,84 @@ export default function Sidebar({
   onNameChange,
   currentName,
 }: Props) {
-  const isBin = design.type === 'bin'
-
-  // Use the saved design name for export downloads, falling back to a default.
-  const baseName = () => {
-    const fallback = isBin ? 'bin' : 'box'
-    return currentName.trim().replace(/[^a-z0-9-_]+/gi, '_') || fallback
-  }
+  // Use the saved design name for export downloads, falling back to the type name.
+  const baseName = () =>
+    currentName.trim().replace(/[^a-z0-9-_]+/gi, '_') || design.type
 
   // Bin → single .stl. Sliding box → .zip of box.stl + lid.stl. Hinged box →
   // one combined .stl (it's a single print-in-place assembly). exportBoxSTL
   // returns the right extension for the box case.
   const doExportSTL = () => {
     const base = baseName()
-    if (isBin) {
-      downloadBlob(exportSTL(design.bin), `${base}.stl`)
-    } else {
-      const { blob, ext } = exportBoxSTL(design.box, base)
-      downloadBlob(blob, `${base}.${ext}`)
+    switch (design.type) {
+      case 'bin':
+        downloadBlob(exportSTL(design.bin), `${base}.stl`)
+        break
+      case 'box': {
+        const { blob, ext } = exportBoxSTL(design.box, base)
+        downloadBlob(blob, `${base}.${ext}`)
+        break
+      }
+      case 'skadis':
+        downloadBlob(exportSkadisSTL(design.skadis), `${base}.stl`)
+        break
+      default:
+        assertNever(design.type)
     }
   }
   // 3MF supports multiple objects natively, so the box 3MF carries box + lid as
   // two separate objects in one file.
   const doExport3MF = () => {
     const base = baseName()
-    downloadBlob(isBin ? export3MF(design.bin) : exportBox3MF(design.box), `${base}.3mf`)
+    switch (design.type) {
+      case 'bin':
+        downloadBlob(export3MF(design.bin), `${base}.3mf`)
+        break
+      case 'box':
+        downloadBlob(exportBox3MF(design.box), `${base}.3mf`)
+        break
+      case 'skadis':
+        downloadBlob(exportSkadis3MF(design.skadis), `${base}.3mf`)
+        break
+      default:
+        assertNever(design.type)
+    }
+  }
+
+  // Per-type controls panel. Each case owns its model + setter; assertNever makes
+  // a new object type a compile error until it has a controls component here.
+  const renderControls = () => {
+    switch (design.type) {
+      case 'bin':
+        return (
+          <BinControls
+            model={design.bin}
+            setModel={setBin}
+            showBuildPlate={showBuildPlate}
+            setShowBuildPlate={setShowBuildPlate}
+          />
+        )
+      case 'box':
+        return (
+          <BoxControls
+            model={design.box}
+            setModel={setBox}
+            showBuildPlate={showBuildPlate}
+            setShowBuildPlate={setShowBuildPlate}
+          />
+        )
+      case 'skadis':
+        return (
+          <SkadisControls
+            model={design.skadis}
+            setModel={setSkadis}
+            showBuildPlate={showBuildPlate}
+            setShowBuildPlate={setShowBuildPlate}
+          />
+        )
+      default:
+        return assertNever(design.type)
+    }
   }
 
   return (
@@ -86,12 +154,15 @@ export default function Sidebar({
 
         {/* Object-type switch */}
         <div className="seg type-switch">
-          <button className={isBin ? 'active' : ''} onClick={() => setType('bin')}>
-            Bin
-          </button>
-          <button className={!isBin ? 'active' : ''} onClick={() => setType('box')}>
-            Sliding Box
-          </button>
+          {TYPE_TABS.map((t) => (
+            <button
+              key={t.id}
+              className={design.type === t.id ? 'active' : ''}
+              onClick={() => setType(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
 
         <div className="export-group">
@@ -114,21 +185,7 @@ export default function Sidebar({
         </div>
       </header>
 
-      {isBin ? (
-        <BinControls
-          model={design.bin}
-          setModel={setBin}
-          showBuildPlate={showBuildPlate}
-          setShowBuildPlate={setShowBuildPlate}
-        />
-      ) : (
-        <BoxControls
-          model={design.box}
-          setModel={setBox}
-          showBuildPlate={showBuildPlate}
-          setShowBuildPlate={setShowBuildPlate}
-        />
-      )}
+      {renderControls()}
     </aside>
   )
 }
@@ -333,6 +390,133 @@ function BoxControls({
           {hinged
             ? 'Gap around the hinge pin/knuckles. 0.2–0.3mm is the sweet spot; too small fuses the hinge solid, too large is floppy.'
             : 'Smaller clearance = tighter slide. 0.2mm is a good starting point; increase if the lid binds.'}
+        </p>
+      </Section>
+    </>
+  )
+}
+
+// ---------- Skadis-holder controls ----------
+
+function SkadisControls({
+  model,
+  setModel,
+  showBuildPlate,
+  setShowBuildPlate,
+}: {
+  model: SkadisModel
+  setModel: (m: SkadisModel) => void
+  showBuildPlate: boolean
+  setShowBuildPlate: (v: boolean) => void
+}) {
+  const [inches, setInches] = useState(false)
+  const patch = (p: Partial<SkadisModel>) => setModel({ ...model, ...p })
+  const fmtLen = (mm: number) =>
+    inches ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`
+
+  const shapes: { id: HolderShape; label: string }[] = [
+    { id: 'rect', label: 'Rect' },
+    { id: 'rounded', label: 'Rounded' },
+    { id: 'round', label: 'Round' },
+  ]
+  const open = model.bottom === 'open'
+
+  return (
+    <>
+      <Section title="Shape" defaultOpen>
+        <div className="seg">
+          {shapes.map((s) => (
+            <button
+              key={s.id}
+              className={model.shape === s.id ? 'active' : ''}
+              onClick={() => patch({ shape: s.id })}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <p className="hint">
+          Clips onto an IKEA Skadis pegboard (40mm hole grid) via print-in-place back hooks.
+        </p>
+      </Section>
+
+      <Section title="Size" defaultOpen>
+        <Field label={model.shape === 'round' ? 'Width / diameter (X)' : 'Width (X)'}>
+          <NumberInput value={model.width} min={15} max={300} step={0.5} unit="mm"
+            onChange={(v) => patch({ width: v })} />
+        </Field>
+        <Field label={model.shape === 'round' ? 'Depth / diameter (Z)' : 'Depth (Z)'}>
+          <NumberInput value={model.depth} min={15} max={300} step={0.5} unit="mm"
+            onChange={(v) => patch({ depth: v })} />
+        </Field>
+        <Field label="Height (Y)">
+          <NumberInput value={model.height} min={15} max={300} step={0.5} unit="mm"
+            onChange={(v) => patch({ height: v })} />
+        </Field>
+        {model.shape === 'rounded' && (
+          <Field label="Corner radius">
+            <NumberInput value={model.cornerRadius} min={0} max={60} step={0.5} unit="mm"
+              onChange={(v) => patch({ cornerRadius: v })} />
+          </Field>
+        )}
+        <Field label="Taper (base size)">
+          <NumberInput value={model.taper} min={30} max={100} step={1} unit="%"
+            onChange={(v) => patch({ taper: v })} />
+        </Field>
+        <p className="hint">
+          100% = straight walls; lower narrows the base (a tapered cup). The mouth stays full size.
+        </p>
+        <Measurements
+          size={{ x: model.width, y: model.height, z: model.depth }}
+          fmtLen={fmtLen} inches={inches} setInches={setInches}
+        />
+      </Section>
+
+      <Section title="Opening" defaultOpen>
+        <Field label="Front opening">
+          <NumberInput value={model.openingDeg} min={0} max={300} step={5} unit="°"
+            onChange={(v) => patch({ openingDeg: v })} />
+        </Field>
+        <p className="hint">
+          0° = fully enclosed. Larger opens the front by that angle — a clean arc on round shapes, a
+          V-notch on rectangular ones.
+        </p>
+      </Section>
+
+      <Section title="Bottom" defaultOpen>
+        <div className="seg">
+          <button className={!open ? 'active' : ''} onClick={() => patch({ bottom: 'full' })}>
+            Closed
+          </button>
+          <button className={open ? 'active' : ''} onClick={() => patch({ bottom: 'open' })}>
+            Open
+          </button>
+        </div>
+        {open && (
+          <Field label="Support lip">
+            <NumberInput value={model.supportLip} min={0} max={40} step={0.5} unit="mm"
+              onChange={(v) => patch({ supportLip: v })} />
+          </Field>
+        )}
+        <p className="hint">
+          {open
+            ? 'Open floor with an inward rim shelf of this width to support what it holds.'
+            : 'Solid floor.'}
+        </p>
+      </Section>
+
+      <Section title="Construction" defaultOpen>
+        <Toggle label="Show Build Plate" checked={showBuildPlate} onChange={setShowBuildPlate} />
+        <Field label="Wall thickness">
+          <NumberInput value={model.wall} min={1} max={6} step={0.1} unit="mm"
+            onChange={(v) => patch({ wall: v })} />
+        </Field>
+        <Field label="Hook fit (clearance)">
+          <NumberInput value={model.clearance} min={0} max={1} step={0.05} unit="mm"
+            onChange={(v) => patch({ clearance: v })} />
+        </Field>
+        <p className="hint">
+          Gap on the pegboard hooks. 0.2–0.4mm is typical; increase if the hooks won't seat.
         </p>
       </Section>
     </>

@@ -4,10 +4,11 @@ Guidance for working in this repo. Read alongside `README.md` (user-facing) — 
 
 ## What this is
 
-A browser-based parametric builder for 3D-printable storage, with a live 3D preview and print-ready **STL** / **3MF** export. Two **object types** (see "Object types" below):
+A browser-based parametric builder for 3D-printable storage, with a live 3D preview and print-ready **STL** / **3MF** export. Three **object types** (see "Object types" below):
 
 - **Bin** — a Gridfinity-style bin. Gridfinity-aware (42mm grid, chamfered foot, stacking lip) but not constrained by it: the grid pitch is adjustable and a custom-size mode frees the footprint entirely.
 - **Box** — a closed box with a choice of **top type**: a **sliding lid** or a print-in-place **hinged lid**.
+- **Skadis** — a container/holder that clips onto an IKEA SKÅDIS pegboard via print-in-place back hooks. Rectangular / rounded / round cross-section, a full-height taper, an open-bottom rim shelf, and a degrees-based front opening.
 
 Runs 100% in-browser. No backend. Designs persist in localStorage (autosave + named saves) and can be shared via URL.
 
@@ -36,6 +37,7 @@ Strong way to verify geometry/exports without a human: drive the running dev app
 |------|----------------|
 | `src/model/types.ts` | `BinModel` data model, `GRIDFINITY` constants, `defaultBin()`, `resolvedSize()`. |
 | `src/model/box.ts` | `BoxModel` (incl. `topType: 'sliding' \| 'hinged'`), `defaultBox()`, `boxOuterSize()`, `buildBox()` → `{ box, lid, size }` (two meshes). Sliding + hinged geometry. |
+| `src/model/skadis.ts` | `SkadisModel`, `SKADIS` constants, `defaultSkadis()`, `skadisOuterSize()`, `buildSkadis()` → `{ geometry, size }` (one mesh). Container + pegboard hooks. Self-contained. |
 | `src/model/geometry.ts` | `buildBin(model)` — assembles the bin mesh via CSG. |
 | `src/model/csg.ts` | Manifold (WASM) `csgAdd` / `csgSubtract` wrappers, `initCSG()` async init, THREE↔Manifold mesh conversion, `weld()` (vertex merge). |
 | `src/model/export.ts` | Bin `exportSTL`/`export3MF`; box `exportBoxSTL`/`exportBox3MF`; multi-object 3MF writer + dependency-free ZIP/OPC writer with CRC32. |
@@ -51,20 +53,21 @@ State flows one way: `App` owns a single `Design` (`{ type, bin, box }`), passes
 
 ## Persistence
 
-Anything that crosses the trust boundary (localStorage, `.json` import, `?d=` share URL) MUST go through `serialize.ts` — `coerceDesign()` (calling `coerceModel`/`coerceBox`) clamps every field to a safe range and drops bad enums, so untrusted input can never produce an invalid `Design`. Don't `JSON.parse` a design and feed it to `buildBin`/`buildBox` directly.
+Anything that crosses the trust boundary (localStorage, `.json` import, `?d=` share URL) MUST go through `serialize.ts` — `coerceDesign()` (calling `coerceModel`/`coerceBox`/`coerceSkadis`) clamps every field to a safe range and drops bad enums, so untrusted input can never produce an invalid `Design`. Don't `JSON.parse` a design and feed it to `buildBin`/`buildBox`/`buildSkadis` directly.
 
-The persisted unit is a `Design` envelope `{ type, bin, box }` — both models are always present so toggling object type preserves each one's settings. `coerceDesign` is back-compatible: a legacy bare-`BinModel` or `{ model }` shape coerces to `{ type: 'bin', … }`.
+The persisted unit is a `Design` envelope `{ type, bin, box, skadis }` — every model is always present so toggling object type preserves each one's settings. `coerceDesign` is back-compatible: a legacy bare-`BinModel` or `{ model }` shape coerces to `{ type: 'bin', … }`, and a save predating a model (e.g. no `skadis`) fills that model from its default.
 
 Initial design resolution order (`App.initialState`): share URL `?d=` → autosave slot → `defaultDesign()`. Autosave is debounced (300ms) on every change. Named designs are keyed by case-insensitive name (re-saving overwrites). Bump `SCHEMA_VERSION` in `serialize.ts` if the shape changes incompatibly, and handle the migration in the coerce functions.
 
-## Object types: bin vs box
+## Object types: bin, box, skadis
 
-`Design.type` selects which object is built/shown/exported. The two are independent code paths sharing only the CSG kernel and exporters:
+`Design.type` (an `ObjectType`) selects which object is built/shown/exported. The three are independent code paths sharing only the CSG kernel and exporters:
 
 - **bin** → `buildBin` (`geometry.ts`), one mesh. See the two axes + bin geometry below.
 - **box** → `buildBox` (`box.ts`), returns **two** meshes (`box` body + `lid`). `box.ts` is self-contained; don't fold box logic into `geometry.ts`.
+- **skadis** → `buildSkadis` (`skadis.ts`), **one** mesh (container + hooks fused), so it exports like the bin. Self-contained.
 
-Adding a third object type means: a model + `default*()` + builder in its own module, a `coerce*` in `serialize.ts`, a branch in `Design`/`buildBox`-style dispatch, a `*Controls` component in `Sidebar.tsx`, and Viewport/export branches. Keep each object's geometry in its own module.
+**Every dispatch on `ObjectType` is an exhaustive `switch` guarded by `assertNever`** (in `serialize.ts`, `App.tsx`, `Viewport.tsx`, and `Sidebar.tsx`'s `renderControls`/`doExportSTL`/`doExport3MF`), and the header tabs come from the `TYPE_TABS` array. `OBJECT_TYPES` in `serialize.ts` is the single source of the type set. So **adding a fourth type is compiler-guided**: extend the `ObjectType` union + `OBJECT_TYPES`, and every site that needs a new branch fails to compile until handled. The rest of the recipe: a model + `default*()` + `*OuterSize()` + builder in its own module, a `coerce*` in `serialize.ts` (threaded into `Design`/`SavedDesign`/`defaultDesign`/`serializeDesign`/`coerceDesign` **and** the `StoredDesign` literal in `storage.ts` + the `onLoad` literal in `SaveMenu.tsx`), export functions in `export.ts`, a `TYPE_TABS` row + `*Controls` in `Sidebar.tsx`. Keep each object's geometry in its own module.
 
 ## Box top types (`box.ts`)
 
@@ -76,6 +79,15 @@ Adding a third object type means: a model + `default*()` + builder in its own mo
 ### Hinge clearances (research-backed; don't reduce blindly)
 
 FDM print-in-place sweet spot is **0.2–0.3mm**. Defaults: pin-to-bore `boreGap` ≈ 0.25mm, knuckle-to-knuckle gap ≈ 0.3mm, odd knuckle count (5) so both ends are box knuckles. Too small fuses the hinge solid (the #1 failure); too large is floppy. The `clearance` field drives these. If you touch hinge geometry, re-verify: knuckles interleave (alternating box/lid bands, no overlap) and the exported STL stays **interlocked** (X-extent ≈ box width, not ≈ box+lid moved apart).
+
+## Skadis holders (`skadis.ts`)
+
+One fused watertight mesh, modelled Y-up on Y=0 (mouth opening at +Y; **+Z = front**, **−Z = back** where the pegboard sits). Dimensions are the **outer** container. `buildSkadis` pipeline: outer tapered solid → subtract cavity → (open bottom) subtract inner-inset floor → (opening) subtract front wedge → union back plate + hooks → weld.
+
+- **Taper** — one primitive `taperedExtrude(shape, h, y0, bottomScale, topScale)`: build a bevel-free `ExtrudeGeometry` (clean, correctly-wound caps + walls), then scale each vertex's X/Z by a factor from its Y. A bevel-free extrude has vertices **only** at its two ends, so the factor is exactly `bottomScale`/`topScale` → an exact linear taper. `bottomScale = taper/100`, mouth = 1. (ExtrudeGeometry itself can't taper; don't try.) Weld before any boolean, as always.
+- **Front opening** (`openingDeg`) — subtract a full-height **pie-slice wedge** (apex on the axis, bisected by +Z, sampled arc). One uniform rule: a clean arc on round, a V-notch on rect. Capped at 300° so it never reaches the back plate/hooks.
+- **Open bottom** — subtract the inner outline inset by `supportLip` through the floor, leaving a rim shelf.
+- **Mount** — `SKADIS` constants are the real pegboard spec: **40mm** hole pitch, **5×15mm** slots, **5mm** board. Hooks sit on the 40mm grid (columns `floor(width/40)+1`, a 2nd row 40mm down when tall enough), each a peg (width `slotW − clearance`) + downward catch that reaches `boardThickness + clearance` behind the board, with a 45° gusset so it prints supportless upright. The back plate embeds into the container back so the union is a solid overlap (a tangent line on round backs wouldn't be manifold-safe). If you touch hook geometry, re-verify the fit against these dims — it's the one part most likely to need tuning.
 
 ## Two independent axes: Gridfinity vs sizing
 
@@ -121,8 +133,8 @@ When verifying exports: check structural validity (STL header/size consistency `
 
 ## Export format notes
 
-- **STL** — binary, via Three's `STLExporter`. File size must equal `84 + triangles*50`; that's the validity check. STL has **no concept of separate objects** (one file = one mesh soup), which is why multi-part exports differ from 3MF: a sliding box ships a **`.zip` of two `.stl`s**; a hinged box is one combined `.stl` (single print-in-place assembly); a bin is one `.stl`.
-- **3MF** — built by hand: a stored (uncompressed) ZIP of `[Content_Types].xml`, `_rels/.rels`, and `3D/3dmodel.model`. Millimetre units. Supports **multiple objects**: `geometriesToBlob3MF([...])` emits one `<object>` + `<build><item>` per geometry, so boxes export as 2 objects. The ZIP writer (string + binary variants) + CRC32 in `export.ts` are intentionally dependency-free; don't pull in JSZip.
+- **STL** — binary, via Three's `STLExporter`. File size must equal `84 + triangles*50`; that's the validity check. STL has **no concept of separate objects** (one file = one mesh soup), which is why multi-part exports differ from 3MF: a sliding box ships a **`.zip` of two `.stl`s**; a hinged box is one combined `.stl` (single print-in-place assembly); a bin and a skadis holder are each one `.stl`.
+- **3MF** — built by hand: a stored (uncompressed) ZIP of `[Content_Types].xml`, `_rels/.rels`, and `3D/3dmodel.model`. Millimetre units. Supports **multiple objects**: `geometriesToBlob3MF([...])` emits one `<object>` + `<build><item>` per geometry, so boxes export as 2 objects (bins and skadis holders as 1). The ZIP writer (string + binary variants) + CRC32 in `export.ts` are intentionally dependency-free; don't pull in JSZip.
 - Models are Y-up; `toZUp()` rotates **+90° about X** to Z-up for export (slicer convention).
 - `grep -c "<triangle"` on the 3MF lies — all triangles are on one line, so it returns 1. Count substring occurrences, not lines.
 
