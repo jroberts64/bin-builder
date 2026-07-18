@@ -415,8 +415,7 @@ function SkadisControls({
     inches ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`
 
   const shapes: { id: HolderShape; label: string }[] = [
-    { id: 'rect', label: 'Rect' },
-    { id: 'rounded', label: 'Rounded' },
+    { id: 'rect', label: 'Rectangle' },
     { id: 'round', label: 'Round' },
   ]
   const hooks: { id: HookStyle; label: string }[] = [
@@ -458,8 +457,8 @@ function SkadisControls({
           <NumberInput value={model.height} min={15} max={300} step={0.5} unit="mm"
             onChange={(v) => patch({ height: v })} />
         </Field>
-        {model.shape === 'rounded' && (
-          <Field label="Corner radius">
+        {model.shape === 'rect' && (
+          <Field label="Corner radius (0 = sharp)">
             <NumberInput value={model.cornerRadius} min={0} max={60} step={0.5} unit="mm"
               onChange={(v) => patch({ cornerRadius: v })} />
           </Field>

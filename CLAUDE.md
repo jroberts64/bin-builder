@@ -8,7 +8,7 @@ A browser-based parametric builder for 3D-printable storage, with a live 3D prev
 
 - **Bin** — a Gridfinity-style bin. Gridfinity-aware (42mm grid, chamfered foot, stacking lip) but not constrained by it: the grid pitch is adjustable and a custom-size mode frees the footprint entirely.
 - **Box** — a closed box with a choice of **top type**: a **sliding lid** or a print-in-place **hinged lid**.
-- **Skadis** — a container/holder that clips onto an IKEA SKÅDIS pegboard via print-in-place back hooks. Rectangular / rounded / round cross-section, a full-height taper, an open-bottom rim shelf, and a degrees-based front opening.
+- **Skadis** — a container/holder that clips onto an IKEA SKÅDIS pegboard via print-in-place back hooks. Rectangular (adjustable corner radius; 0 = sharp) or round/elliptical cross-section, a full-height taper, an open-bottom rim shelf, and a degrees-based front opening.
 
 Runs 100% in-browser. No backend. Designs persist in localStorage (autosave + named saves) and can be shared via URL.
 

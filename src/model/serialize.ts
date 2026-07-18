@@ -95,15 +95,18 @@ export function coerceBox(raw: unknown): BoxModel {
   }
 }
 
-const HOLDER_SHAPES: HolderShape[] = ['rect', 'rounded', 'round']
+const HOLDER_SHAPES: HolderShape[] = ['rect', 'round']
 const HOOK_STYLES: HookStyle[] = ['peg', 'snap', 'clip']
 
 // Turn arbitrary parsed JSON into a guaranteed-valid SkadisModel.
 export function coerceSkadis(raw: unknown): SkadisModel {
   const d = defaultSkadis()
   const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<SkadisModel>
+  // Legacy migration: the separate 'rounded' shape folded into 'rect' (which now
+  // carries the corner radius; radius 0 = sharp). Preserve the saved radius.
+  const rawShape = m.shape === ('rounded' as HolderShape) ? 'rect' : m.shape
   return {
-    shape: oneOf(m.shape, HOLDER_SHAPES, d.shape),
+    shape: oneOf(rawShape, HOLDER_SHAPES, d.shape),
     width: num(m.width, d.width, 15, 300),
     depth: num(m.depth, d.depth, 15, 300),
     height: num(m.height, d.height, 15, 300),

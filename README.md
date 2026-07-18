@@ -19,8 +19,8 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     with an overlapping lip + snap bead. Exports as one combined object.
     Hinge/knuckle clearances follow FDM best practice (~0.25mm pin gap).
 - **Skadis holders** — containers that clip onto an IKEA SKÅDIS pegboard via
-  print-in-place back hooks (40mm hole grid). Choose a **rectangular**,
-  **rounded**, or **round** cross-section, then:
+  print-in-place back hooks (40mm hole grid). Choose a **rectangular**
+  (with an adjustable corner radius — 0 = sharp) or **round** cross-section, then:
   - **Taper** — narrow the base toward a full-size mouth (a tapered cup).
   - **Front opening** — open the front by a chosen angle (a clean arc on round
     shapes, a V-notch on rectangular ones).
@@ -126,7 +126,7 @@ For a second project in the same AWS account, deploy `github-oidc.yaml` with
 | `src/model/types.ts` | `BinModel` data model, Gridfinity constants, size resolution |
 | `src/model/geometry.ts` | Builds the bin mesh via CSG: rounded body + chamfered feet, hollowed cavity, dividers, scoops, label tabs, bored magnet/screw holes, lip |
 | `src/model/box.ts` | `BoxModel` + `buildBox`: sliding-lid and print-in-place hinged-lid boxes (two meshes) |
-| `src/model/skadis.ts` | `SkadisModel` + `buildSkadis`: pegboard holder — tapered rect/rounded/round container, front opening, open bottom, back hooks (one mesh) |
+| `src/model/skadis.ts` | `SkadisModel` + `buildSkadis`: pegboard holder — tapered rect/round container, front opening, open bottom, back hooks (one mesh) |
 | `src/model/csg.ts` | Manifold (WASM) add/subtract wrappers, async `initCSG()`, THREE↔Manifold conversion, vertex-weld helper |
 | `src/model/export.ts` | STL exporter + dependency-free 3MF (ZIP/OPC) writer |
 | `src/model/serialize.ts` | Versioned (de)serialization + input validation; `.json` and share-URL encoding. Single trusted-input boundary. |

@@ -29,7 +29,9 @@ export const SKADIS = {
   boardThickness: 5, // mm
 } as const
 
-export type HolderShape = 'rect' | 'rounded' | 'round'
+// Two cross-sections: a rectangle (with an adjustable corner radius — 0 = sharp
+// corners, so a plain rectangle is just radius 0) or a round/elliptical tube.
+export type HolderShape = 'rect' | 'round'
 
 // How the back hooks grip the pegboard. All three print upright (the same
 // orientation the holder is used in) and leave the board channel clear so the
@@ -94,7 +96,12 @@ function crossSection(shape: HolderShape, w: number, d: number, r: number): THRE
     s.absellipse(0, 0, Math.max(0.5, x), Math.max(0.5, z), 0, Math.PI * 2, false, 0)
     return s
   }
-  if (shape === 'rect') {
+  // Rectangle with an optional corner radius. r ≈ 0 → sharp corners (a plain
+  // rectangle); a small radius uses the same rounded construction as
+  // geometry.ts roundedPrism. Sharp is special-cased to avoid emitting
+  // degenerate zero-radius arcs.
+  const rr = clamp(r, 0, Math.min(w / 2 - 0.01, d / 2 - 0.01))
+  if (rr < 0.05) {
     s.moveTo(-x, -z)
     s.lineTo(x, -z)
     s.lineTo(x, z)
@@ -102,8 +109,6 @@ function crossSection(shape: HolderShape, w: number, d: number, r: number): THRE
     s.closePath()
     return s
   }
-  // rounded rectangle (same construction as geometry.ts roundedPrism)
-  const rr = clamp(r, 0, Math.min(w / 2 - 0.01, d / 2 - 0.01))
   s.moveTo(-x + rr, -z)
   s.lineTo(x - rr, -z)
   s.quadraticCurveTo(x, -z, x, -z + rr)
@@ -116,7 +121,7 @@ function crossSection(shape: HolderShape, w: number, d: number, r: number): THRE
   return s
 }
 
-const segFor = (shape: HolderShape) => (shape === 'round' ? 64 : shape === 'rounded' ? 8 : 1)
+const segFor = (shape: HolderShape) => (shape === 'round' ? 64 : 8)
 
 // Loft a cross-section into a tapered solid spanning y ∈ [y0, y0+h].
 //
