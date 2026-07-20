@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { BinModel } from './types'
 import { BoxModel } from './box'
 import { SkadisModel } from './skadis'
@@ -30,6 +30,10 @@ export function exportSTL(model: BinModel): Blob {
   return geometryToSTL(exportGeometry(model))
 }
 
+export function exportSTEP(model: BinModel): Blob {
+  return geometriesToBlobSTEP([exportGeometry(model)], 'bin')
+}
+
 // --- Skadis holder: one fused mesh (container + hooks), like the bin --------
 
 function skadisExportGeometry(model: SkadisModel): THREE.BufferGeometry {
@@ -42,6 +46,10 @@ export function exportSkadisSTL(model: SkadisModel): Blob {
 
 export function exportSkadis3MF(model: SkadisModel): Blob {
   return geometryToBlob3MF(skadisExportGeometry(model))
+}
+
+export function exportSkadisSTEP(model: SkadisModel): Blob {
+  return geometriesToBlobSTEP([skadisExportGeometry(model)], 'skadis')
 }
 
 // --- Sliding-lid box: box body + lid as TWO separate objects, laid out side by
@@ -91,6 +99,14 @@ export function exportBoxSTL(model: BoxModel, baseName: string): { blob: Blob; e
     { name: `${baseName}-lid.stl`, data: new Uint8Array(stlBytes(lid)) },
   ])
   return { blob: new Blob([zip as unknown as ArrayBuffer], { type: 'application/zip' }), ext: 'zip' }
+}
+
+// STEP holds multiple solid bodies in one file, so — unlike STL — both box
+// cases are a single .step: box + lid as two solids, in their export positions
+// (apart for sliding, interlocked for hinged).
+export function exportBoxSTEP(model: BoxModel): Blob {
+  const { box, lid } = boxExportParts(model)
+  return geometriesToBlobSTEP([box, lid], 'box')
 }
 
 function stlBytes(geom: THREE.BufferGeometry): ArrayBuffer {
@@ -175,6 +191,169 @@ function geometriesToBlob3MF(geoms: THREE.BufferGeometry[]): Blob {
 
 function fmt(n: number): string {
   return Number.isFinite(n) ? n.toFixed(4).replace(/\.?0+$/, '') : '0'
+}
+
+// --- Minimal STEP (AP214) writer ------------------------------------------
+// STL/3MF are meshes; a STEP file is a boundary representation (B-rep) with real
+// topology (solids, faces, edges, vertices) that CAD tools can select and edit.
+// We can't recover the original analytic surfaces from a triangle mesh, so this
+// emits a FACETED B-rep: every triangle becomes a planar ADVANCED_FACE, but with
+// shared vertices and shared edges so the result is a genuine MANIFOLD_SOLID_BREP
+// (one closed shell), not a loose triangle soup. It imports as a real solid body
+// — you just can't grab, say, a fillet and change its radius (it's facets).
+//
+// Hand-rolled to stay dependency-free, like the 3MF/ZIP writers. Entity ids are
+// assigned sequentially; STEP allows forward references, so emission order is
+// free (we build the solids first, then the shared context + product wrapper).
+
+// Format a real for STEP: always a decimal point, trailing zeros trimmed.
+function sNum(n: number): string {
+  if (!Number.isFinite(n)) n = 0
+  let s = n.toFixed(6).replace(/0+$/, '')
+  if (s.endsWith('.')) s += '0'
+  return s
+}
+
+// Emit one geometry as a MANIFOLD_SOLID_BREP; returns its entity id. Each passed
+// geometry is assumed to be a single connected, closed, manifold mesh (true for
+// every per-part output of our builders). `E(body)` appends `#id=body;` and hands
+// back the id.
+function emitSolidSTEP(geometry: THREE.BufferGeometry, E: (body: string) => number): number {
+  // Weld on POSITION ONLY (stripping normals etc.) so coincident vertices merge
+  // into shared topology — split normals would otherwise keep edges unshared and
+  // the shell wouldn't close.
+  const g0 = new THREE.BufferGeometry()
+  g0.setAttribute('position', geometry.getAttribute('position'))
+  if (geometry.index) g0.setIndex(geometry.index)
+  const geom = mergeVertices(g0)
+
+  const pos = geom.getAttribute('position') as THREE.BufferAttribute
+  const idx = geom.getIndex()!
+  const nv = pos.count
+
+  // One CARTESIAN_POINT + VERTEX_POINT per unique vertex, reused everywhere.
+  const cp: number[] = new Array(nv)
+  for (let i = 0; i < nv; i++) {
+    cp[i] = E(`CARTESIAN_POINT('',(${sNum(pos.getX(i))},${sNum(pos.getY(i))},${sNum(pos.getZ(i))}))`)
+  }
+  const vp: number[] = new Array(nv)
+  for (let i = 0; i < nv; i++) vp[i] = E(`VERTEX_POINT('',#${cp[i]})`)
+
+  // One EDGE_CURVE per undirected edge (keyed low*nv+high), oriented low→high.
+  const edgeMap = new Map<number, number>()
+  const getEdge = (lo: number, hi: number): number => {
+    const key = lo * nv + hi
+    const found = edgeMap.get(key)
+    if (found !== undefined) return found
+    let dx = pos.getX(hi) - pos.getX(lo)
+    let dy = pos.getY(hi) - pos.getY(lo)
+    let dz = pos.getZ(hi) - pos.getZ(lo)
+    const len = Math.hypot(dx, dy, dz) || 1
+    dx /= len; dy /= len; dz /= len
+    const dir = E(`DIRECTION('',(${sNum(dx)},${sNum(dy)},${sNum(dz)}))`)
+    const vec = E(`VECTOR('',#${dir},${sNum(len)})`)
+    const line = E(`LINE('',#${cp[lo]},#${vec})`)
+    const ec = E(`EDGE_CURVE('',#${vp[lo]},#${vp[hi]},#${line},.T.)`)
+    edgeMap.set(key, ec)
+    return ec
+  }
+  // ORIENTED_EDGE from u→v, flagging whether it runs with (.T.) or against
+  // (.F.) the shared curve's canonical low→high direction.
+  const orientedEdge = (u: number, v: number): number => {
+    const ec = getEdge(Math.min(u, v), Math.max(u, v))
+    return E(`ORIENTED_EDGE('',*,*,#${ec},${u < v ? '.T.' : '.F.'})`)
+  }
+
+  const faceIds: number[] = []
+  for (let t = 0; t < idx.count; t += 3) {
+    const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2)
+    // Outward normal from the CCW winding (right-hand rule).
+    const ux = pos.getX(b) - pos.getX(a), uy = pos.getY(b) - pos.getY(a), uz = pos.getZ(b) - pos.getZ(a)
+    const vx = pos.getX(c) - pos.getX(a), vy = pos.getY(c) - pos.getY(a), vz = pos.getZ(c) - pos.getZ(a)
+    let nx = uy * vz - uz * vy
+    let ny = uz * vx - ux * vz
+    let nz = ux * vy - uy * vx
+    const nl = Math.hypot(nx, ny, nz)
+    if (nl < 1e-12) continue // skip degenerate (zero-area) triangles
+    nx /= nl; ny /= nl; nz /= nl
+    // A reference direction in the plane: project a helper axis off the normal.
+    let hx = 0, hy = 0, hz = 0
+    if (Math.abs(nx) < 0.9) hx = 1; else hy = 1
+    const d = hx * nx + hy * ny + hz * nz
+    let rx = hx - d * nx, ry = hy - d * ny, rz = hz - d * nz
+    const rl = Math.hypot(rx, ry, rz) || 1
+    rx /= rl; ry /= rl; rz /= rl
+
+    const loop = E(
+      `EDGE_LOOP('',(#${orientedEdge(a, b)},#${orientedEdge(b, c)},#${orientedEdge(c, a)}))`,
+    )
+    const fob = E(`FACE_OUTER_BOUND('',#${loop},.T.)`)
+    const nDir = E(`DIRECTION('',(${sNum(nx)},${sNum(ny)},${sNum(nz)}))`)
+    const rDir = E(`DIRECTION('',(${sNum(rx)},${sNum(ry)},${sNum(rz)}))`)
+    const plc = E(`AXIS2_PLACEMENT_3D('',#${cp[a]},#${nDir},#${rDir})`)
+    const plane = E(`PLANE('',#${plc})`)
+    faceIds.push(E(`ADVANCED_FACE('',(#${fob}),#${plane},.T.)`))
+  }
+
+  const shell = E(`CLOSED_SHELL('',(${faceIds.map((f) => `#${f}`).join(',')}))`)
+  return E(`MANIFOLD_SOLID_BREP('',#${shell})`)
+}
+
+// Emit one STEP file containing each geometry as its own solid body (like the
+// multi-object 3MF writer). Geometries must already be positioned in Z-up mm.
+function geometriesToBlobSTEP(geoms: THREE.BufferGeometry[], productName: string): Blob {
+  const lines: string[] = []
+  let id = 0
+  const E = (body: string): number => {
+    const n = ++id
+    lines.push(`#${n}=${body};`)
+    return n
+  }
+
+  const solidIds = geoms.map((g) => emitSolidSTEP(g, E))
+
+  // Units: length in millimetres, plane angle in radians, plus a solid angle.
+  const lengthUnit = E(`( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) )`)
+  const angleUnit = E(`( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )`)
+  const solidAngleUnit = E(`( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() )`)
+  const uncertainty = E(
+    `UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-06),#${lengthUnit},'distance_accuracy_value','confusion accuracy')`,
+  )
+  const context = E(
+    `( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#${uncertainty})) ` +
+      `GLOBAL_UNIT_ASSIGNED_CONTEXT((#${lengthUnit},#${angleUnit},#${solidAngleUnit})) ` +
+      `REPRESENTATION_CONTEXT('Context','3D') )`,
+  )
+
+  const originPt = E(`CARTESIAN_POINT('',(0.0,0.0,0.0))`)
+  const zDir = E(`DIRECTION('',(0.0,0.0,1.0))`)
+  const xDir = E(`DIRECTION('',(1.0,0.0,0.0))`)
+  const axis = E(`AXIS2_PLACEMENT_3D('',#${originPt},#${zDir},#${xDir})`)
+
+  const repItems = [axis, ...solidIds].map((i) => `#${i}`).join(',')
+  const shapeRep = E(`ADVANCED_BREP_SHAPE_REPRESENTATION('',(${repItems}),#${context})`)
+
+  // Minimal product structure tying the shape representation to a named product.
+  const appContext = E(`APPLICATION_CONTEXT('core data for automotive mechanical design processes')`)
+  E(`APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,#${appContext})`)
+  const prodContext = E(`PRODUCT_CONTEXT('',#${appContext},'mechanical')`)
+  const product = E(`PRODUCT('${productName}','${productName}','',(#${prodContext}))`)
+  const formation = E(`PRODUCT_DEFINITION_FORMATION('','',#${product})`)
+  const defContext = E(`PRODUCT_DEFINITION_CONTEXT('part definition',#${appContext},'design')`)
+  const prodDef = E(`PRODUCT_DEFINITION('design','',#${formation},#${defContext})`)
+  const defShape = E(`PRODUCT_DEFINITION_SHAPE('','',#${prodDef})`)
+  E(`SHAPE_DEFINITION_REPRESENTATION(#${defShape},#${shapeRep})`)
+  E(`PRODUCT_RELATED_PRODUCT_CATEGORY('part','',(#${product}))`)
+
+  const header =
+    `ISO-10303-21;\n` +
+    `HEADER;\n` +
+    `FILE_DESCRIPTION(('faceted b-rep exported by Bin Builder'),'2;1');\n` +
+    `FILE_NAME('${productName}.step','${new Date().toISOString()}',(''),(''),'Bin Builder','Bin Builder','');\n` +
+    `FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n` +
+    `ENDSEC;\n`
+  const text = header + `DATA;\n` + lines.join('\n') + `\nENDSEC;\nEND-ISO-10303-21;\n`
+  return new Blob([text], { type: 'application/step' })
 }
 
 // --- Stored (uncompressed) ZIP builder with CRC32, no dependencies ---------

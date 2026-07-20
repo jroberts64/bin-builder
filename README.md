@@ -46,12 +46,20 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
 - **mm / inch** measurement readout
 - **Save / load** — named designs in the browser (localStorage), auto-save of the
   working design across reloads, `.json` export/import, and shareable `?d=` links
-- **Export** — **watertight** binary STL and a valid 3MF package (Z-up, millimetres)
+- **Export** — **watertight** binary STL and a valid 3MF package (Z-up, millimetres),
+  plus a **STEP** file for CAD
 
 > **Watertight output:** geometry is built with the [Manifold](https://github.com/elalish/manifold)
 > CSG kernel, which guarantees manifold meshes (every edge shared by exactly two
 > triangles). Exports import cleanly into strict slicers like Bambu Studio with no
 > repair step required.
+>
+> **STEP export is a *faceted* B-rep:** each triangle becomes a planar face, welded
+> into a real closed-shell solid body (imports as a genuine solid in CAD, not a mesh
+> or triangle soup). But because a mesh carries no analytic surfaces, the faces are
+> flat facets — you can reference, measure, and boolean the body, but you can't grab
+> a face and edit it as a parametric surface (e.g. change a fillet radius). For
+> parametric edits, change the parameters here and re-export.
 
 ## Develop
 
@@ -128,7 +136,7 @@ For a second project in the same AWS account, deploy `github-oidc.yaml` with
 | `src/model/box.ts` | `BoxModel` + `buildBox`: sliding-lid and print-in-place hinged-lid boxes (two meshes) |
 | `src/model/skadis.ts` | `SkadisModel` + `buildSkadis`: pegboard holder — tapered rect/round container, front opening, open bottom, back hooks (one mesh) |
 | `src/model/csg.ts` | Manifold (WASM) add/subtract wrappers, async `initCSG()`, THREE↔Manifold conversion, vertex-weld helper |
-| `src/model/export.ts` | STL exporter + dependency-free 3MF (ZIP/OPC) writer |
+| `src/model/export.ts` | STL exporter + dependency-free 3MF (ZIP/OPC) and faceted-STEP writers |
 | `src/model/serialize.ts` | Versioned (de)serialization + input validation; `.json` and share-URL encoding. Single trusted-input boundary. |
 | `src/model/storage.ts` | localStorage CRUD for named designs + the autosave slot |
 | `src/Viewport.tsx` | Three.js scene, lights, orbit controls, build plate (debounced rebuild) |

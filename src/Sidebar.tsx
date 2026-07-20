@@ -12,10 +12,13 @@ import { Design, ObjectType, assertNever } from './model/serialize'
 import {
   export3MF,
   exportSTL,
+  exportSTEP,
   exportBox3MF,
   exportBoxSTL,
+  exportBoxSTEP,
   exportSkadisSTL,
   exportSkadis3MF,
+  exportSkadisSTEP,
   downloadBlob,
 } from './model/export'
 import SaveMenu from './SaveMenu'
@@ -102,6 +105,24 @@ export default function Sidebar({
         assertNever(design.type)
     }
   }
+  // STEP is a faceted B-rep (one solid per part). A box carries body + lid as
+  // two solids in one .step, so — unlike STL — there's no zip for the box case.
+  const doExportSTEP = () => {
+    const base = baseName()
+    switch (design.type) {
+      case 'bin':
+        downloadBlob(exportSTEP(design.bin), `${base}.step`)
+        break
+      case 'box':
+        downloadBlob(exportBoxSTEP(design.box), `${base}.step`)
+        break
+      case 'skadis':
+        downloadBlob(exportSkadisSTEP(design.skadis), `${base}.step`)
+        break
+      default:
+        assertNever(design.type)
+    }
+  }
 
   // Per-type controls panel. Each case owns its model + setter; assertNever makes
   // a new object type a compile error until it has a controls component here.
@@ -181,6 +202,14 @@ export default function Sidebar({
             onClick={doExport3MF}
           >
             Export 3MF
+          </button>
+          <button
+            className="btn"
+            disabled={!ready}
+            title="Download a STEP file for CAD. Faceted B-rep solid — imports as a real body, but the faces are triangles (not editable as parametric surfaces)."
+            onClick={doExportSTEP}
+          >
+            Export STEP
           </button>
         </div>
       </header>
