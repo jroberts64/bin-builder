@@ -17,59 +17,25 @@ function toZUp(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   return g
 }
 
-// Optional design metadata (the serialized Design JSON) is appended to the
-// binary STL as a trailing footer: [json bytes][uint32 length LE][8-byte magic].
-// A binary STL reader consumes exactly `count` triangles and ignores anything
-// after, so slicers still load the mesh; a reader that knows the magic can
-// recover the JSON from the end without parsing the mesh. This deliberately
-// breaks the `84 + tris*50` size equality, so any strict size validator (and
-// our own verification) must strip the footer first — see readStlMeta.
-const STL_META_MAGIC = 'BINBLDR1' // 8 ASCII bytes
-
-function appendStlMeta(stl: ArrayBuffer, metaJson: string): ArrayBuffer {
-  const enc = new TextEncoder()
-  const json = enc.encode(metaJson)
-  const magic = enc.encode(STL_META_MAGIC)
-  const out = new Uint8Array(stl.byteLength + json.length + 4 + magic.length)
-  out.set(new Uint8Array(stl), 0)
-  let p = stl.byteLength
-  out.set(json, p)
-  p += json.length
-  new DataView(out.buffer).setUint32(p, json.length, true)
-  p += 4
-  out.set(magic, p)
-  return out.buffer
-}
-
-// Recover the embedded design JSON from an STL exported with a metadata footer,
-// or null if the footer is absent/malformed. Symmetric with appendStlMeta.
-export function readStlMeta(stl: ArrayBuffer): string | null {
-  const bytes = new Uint8Array(stl)
-  const magic = new TextEncoder().encode(STL_META_MAGIC)
-  const foot = magic.length + 4
-  if (bytes.length < foot) return null
-  for (let i = 0; i < magic.length; i++) {
-    if (bytes[bytes.length - magic.length + i] !== magic[i]) return null
-  }
-  const lenAt = bytes.length - foot
-  const len = new DataView(bytes.buffer, bytes.byteOffset).getUint32(lenAt, true)
-  const start = lenAt - len
-  if (start < 84) return null
-  return new TextDecoder().decode(bytes.subarray(start, lenAt))
-}
-
-function geometryToSTL(geom: THREE.BufferGeometry, meta?: string): Blob {
-  const bytes = stlBytes(geom)
-  const out = meta ? appendStlMeta(bytes, meta) : bytes
-  return new Blob([out], { type: 'model/stl' })
+// A binary STL is EXACTLY `84 + tris*50` bytes and carries nothing else. We used
+// to append the design JSON as a trailing footer on the theory that readers
+// consume `count` triangles and ignore the rest — they don't. admesh-derived
+// readers (Bambu Studio, OrcaSlicer, PrusaSlicer) cross-check the file size
+// against the header count, and on mismatch fall back to parsing the file as
+// ASCII STL, find no `facet normal`, and reject it as "does not contain any
+// geometry data". Design metadata therefore lives ONLY in the 3MF (a namespaced
+// <metadata> element — standards-clean and re-importable); never re-add trailing
+// bytes to an STL.
+function geometryToSTL(geom: THREE.BufferGeometry): Blob {
+  return new Blob([stlBytes(geom)], { type: 'model/stl' })
 }
 
 function exportGeometry(model: BinModel): THREE.BufferGeometry {
   return toZUp(buildBin(model).geometry)
 }
 
-export function exportSTL(model: BinModel, meta?: string): Blob {
-  return geometryToSTL(exportGeometry(model), meta)
+export function exportSTL(model: BinModel): Blob {
+  return geometryToSTL(exportGeometry(model))
 }
 
 export function exportSTEP(model: BinModel): Blob {
@@ -82,8 +48,8 @@ function skadisExportGeometry(model: SkadisModel): THREE.BufferGeometry {
   return toZUp(buildSkadis(model).geometry)
 }
 
-export function exportSkadisSTL(model: SkadisModel, meta?: string): Blob {
-  return geometryToSTL(skadisExportGeometry(model), meta)
+export function exportSkadisSTL(model: SkadisModel): Blob {
+  return geometryToSTL(skadisExportGeometry(model))
 }
 
 export function exportSkadis3MF(model: SkadisModel, meta?: string): Blob {
@@ -101,8 +67,8 @@ function lithoExportGeometry(model: LithoModel): THREE.BufferGeometry {
   return toZUp(buildLitho(model).geometry)
 }
 
-export function exportLithoSTL(model: LithoModel, meta?: string): Blob {
-  return geometryToSTL(lithoExportGeometry(model), meta)
+export function exportLithoSTL(model: LithoModel): Blob {
+  return geometryToSTL(lithoExportGeometry(model))
 }
 
 export function exportLitho3MF(model: LithoModel, meta?: string): Blob {
@@ -148,25 +114,17 @@ export function exportBox3MF(model: BoxModel, meta?: string): Blob {
 //   - flat-hinged: a single print-in-place assembly → one combined .stl
 //   - sliding / top-hinged: two hand-assembled parts → two .stl files in a .zip
 // Returns the blob and the file extension to use.
-export function exportBoxSTL(
-  model: BoxModel,
-  baseName: string,
-  meta?: string,
-): { blob: Blob; ext: string } {
+export function exportBoxSTL(model: BoxModel, baseName: string): { blob: Blob; ext: string } {
   const { box, lid } = boxExportParts(model)
   if (model.topType === 'hinged' && model.hingeStyle === 'flat') {
     const combined = mergeGeometries([box, lid], false)!
-    return { blob: geometryToSTL(combined, meta), ext: 'stl' }
+    return { blob: geometryToSTL(combined), ext: 'stl' }
   }
-  // Two separate .stls in a .zip — footer the design onto each part so either
-  // file alone carries the full design.
-  const withMeta = (g: THREE.BufferGeometry) => {
-    const b = stlBytes(g)
-    return new Uint8Array(meta ? appendStlMeta(b, meta) : b)
-  }
+  // Two separate .stls in a .zip.
+  const bytes = (g: THREE.BufferGeometry) => new Uint8Array(stlBytes(g))
   const zip = zipStoreBinary([
-    { name: `${baseName}-box.stl`, data: withMeta(box) },
-    { name: `${baseName}-lid.stl`, data: withMeta(lid) },
+    { name: `${baseName}-box.stl`, data: bytes(box) },
+    { name: `${baseName}-lid.stl`, data: bytes(lid) },
   ])
   return { blob: new Blob([zip as unknown as ArrayBuffer], { type: 'application/zip' }), ext: 'zip' }
 }

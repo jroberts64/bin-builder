@@ -351,7 +351,20 @@ export function buildLitho(m: LithoModel): BuiltLitho {
     geo = csgSubtract(geo, weld(cyl))
   }
 
-  geo = weld(geo)
+  // NO final weld() here — deliberately, unlike the other builders. Whatever
+  // reaches this point is already indexed and manifold (a heightfield built that
+  // way by construction, or a Manifold CSG result), and weld() is *destructive*
+  // on it. Trimming a fine relief grid against the outline leaves pinch points
+  // where two topologically distinct vertices share one position; merging those
+  // fuses separate corners into edges shared by 3+ triangles (measured: 20
+  // non-manifold edges on a 140×200mm r4 photo panel, 0 without the weld).
+  //
+  // Consequence for verification: those coincident-position pairs mean a
+  // position-quantizing edge check REPORTS FALSE non-manifold edges on litho
+  // meshes (it re-does the very merge we avoid). Check litho output with the
+  // exact index-based edge test on the indexed geometry instead; the mesh is
+  // edge-manifold (every edge in exactly 2 triangles), which is what slicers and
+  // 3MF/STL require, even though a few vertices are bowties.
   geo.computeBoundingBox()
 
   return { geometry: geo, size: { x: m.width, y: panelH, z: maxT } }

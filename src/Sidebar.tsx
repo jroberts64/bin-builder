@@ -72,9 +72,11 @@ export default function Sidebar({
   const baseName = () =>
     currentName.trim().replace(/[^a-z0-9-_]+/gi, '_') || design.type
 
-  // The design metadata embedded in STL (trailing footer) and 3MF (<metadata>)
-  // exports: the same serialized Design envelope as the .json export, so the
-  // exported model file is re-importable, not just self-describing.
+  // The design metadata embedded in 3MF exports (a namespaced <metadata>
+  // element): the same serialized Design envelope as the .json export, so the
+  // exported model file is re-importable, not just self-describing. STL can't
+  // carry it — a binary STL is exactly 84+tris*50 bytes and slicers reject any
+  // trailing bytes (see export.ts).
   const metaJson = () => toJSON(design, currentName.trim() || undefined)
 
   // Bin → single .stl. Sliding box → .zip of box.stl + lid.stl. Hinged box →
@@ -82,24 +84,23 @@ export default function Sidebar({
   // returns the right extension for the box case.
   const doExportSTL = () => {
     const base = baseName()
-    const meta = metaJson()
     switch (design.type) {
       case 'bin':
-        downloadBlob(exportSTL(design.bin, meta), `${base}.stl`)
+        downloadBlob(exportSTL(design.bin), `${base}.stl`)
         break
       case 'box': {
-        const { blob, ext } = exportBoxSTL(design.box, base, meta)
+        const { blob, ext } = exportBoxSTL(design.box, base)
         downloadBlob(blob, `${base}.${ext}`)
         break
       }
       case 'skadis':
-        downloadBlob(exportSkadisSTL(design.skadis, meta), `${base}.stl`)
+        downloadBlob(exportSkadisSTL(design.skadis), `${base}.stl`)
         break
       case 'litho':
         // The relief needs the decoded image in the cache (usually a no-op —
         // the viewport preview already decoded it).
         prepareLithoImage(design.litho).then(() =>
-          downloadBlob(exportLithoSTL(design.litho, meta), `${base}.stl`),
+          downloadBlob(exportLithoSTL(design.litho), `${base}.stl`),
         )
         break
       default:
