@@ -33,6 +33,7 @@ function readAll(): StoredDesign[] {
           bin: design.bin,
           box: design.box,
           skadis: design.skadis,
+          litho: design.litho,
         }
       })
   } catch {

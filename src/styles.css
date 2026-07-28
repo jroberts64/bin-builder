@@ -271,3 +271,10 @@ input[type='number'] { -moz-appearance: textfield; }
   opacity: 1; visibility: visible; transform: translateY(0);
 }
 .info-pop b { color: var(--text); }
+
+/* Lithophane image uploader */
+.litho-upload { display: flex; gap: 8px; }
+.litho-preview {
+  display: block; max-width: 100%; max-height: 140px; margin-top: 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+}

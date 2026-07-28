@@ -8,7 +8,8 @@ import {
 } from './model/types'
 import { BoxModel } from './model/box'
 import { SkadisModel, HolderShape, HookStyle } from './model/skadis'
-import { Design, ObjectType, assertNever } from './model/serialize'
+import { LithoModel, LithoShape, imageFileToDataURL, prepareLithoImage } from './model/litho'
+import { Design, ObjectType, assertNever, toJSON } from './model/serialize'
 import {
   export3MF,
   exportSTL,
@@ -19,6 +20,8 @@ import {
   exportSkadisSTL,
   exportSkadis3MF,
   exportSkadisSTEP,
+  exportLithoSTL,
+  exportLitho3MF,
   downloadBlob,
 } from './model/export'
 import SaveMenu from './SaveMenu'
@@ -28,6 +31,7 @@ interface Props {
   setBin: (m: BinModel) => void
   setBox: (m: BoxModel) => void
   setSkadis: (m: SkadisModel) => void
+  setLitho: (m: LithoModel) => void
   setType: (t: ObjectType) => void
   showBuildPlate: boolean
   setShowBuildPlate: (v: boolean) => void
@@ -47,6 +51,7 @@ const TYPE_TABS: { id: ObjectType; label: string }[] = [
   { id: 'bin', label: 'Bin' },
   { id: 'box', label: 'Box' },
   { id: 'skadis', label: 'Skadis' },
+  { id: 'litho', label: 'Litho' },
 ]
 
 export default function Sidebar({
@@ -54,6 +59,7 @@ export default function Sidebar({
   setBin,
   setBox,
   setSkadis,
+  setLitho,
   setType,
   showBuildPlate,
   setShowBuildPlate,
@@ -66,22 +72,35 @@ export default function Sidebar({
   const baseName = () =>
     currentName.trim().replace(/[^a-z0-9-_]+/gi, '_') || design.type
 
+  // The design metadata embedded in STL (trailing footer) and 3MF (<metadata>)
+  // exports: the same serialized Design envelope as the .json export, so the
+  // exported model file is re-importable, not just self-describing.
+  const metaJson = () => toJSON(design, currentName.trim() || undefined)
+
   // Bin → single .stl. Sliding box → .zip of box.stl + lid.stl. Hinged box →
   // one combined .stl (it's a single print-in-place assembly). exportBoxSTL
   // returns the right extension for the box case.
   const doExportSTL = () => {
     const base = baseName()
+    const meta = metaJson()
     switch (design.type) {
       case 'bin':
-        downloadBlob(exportSTL(design.bin), `${base}.stl`)
+        downloadBlob(exportSTL(design.bin, meta), `${base}.stl`)
         break
       case 'box': {
-        const { blob, ext } = exportBoxSTL(design.box, base)
+        const { blob, ext } = exportBoxSTL(design.box, base, meta)
         downloadBlob(blob, `${base}.${ext}`)
         break
       }
       case 'skadis':
-        downloadBlob(exportSkadisSTL(design.skadis), `${base}.stl`)
+        downloadBlob(exportSkadisSTL(design.skadis, meta), `${base}.stl`)
+        break
+      case 'litho':
+        // The relief needs the decoded image in the cache (usually a no-op —
+        // the viewport preview already decoded it).
+        prepareLithoImage(design.litho).then(() =>
+          downloadBlob(exportLithoSTL(design.litho, meta), `${base}.stl`),
+        )
         break
       default:
         assertNever(design.type)
@@ -91,15 +110,21 @@ export default function Sidebar({
   // two separate objects in one file.
   const doExport3MF = () => {
     const base = baseName()
+    const meta = metaJson()
     switch (design.type) {
       case 'bin':
-        downloadBlob(export3MF(design.bin), `${base}.3mf`)
+        downloadBlob(export3MF(design.bin, meta), `${base}.3mf`)
         break
       case 'box':
-        downloadBlob(exportBox3MF(design.box), `${base}.3mf`)
+        downloadBlob(exportBox3MF(design.box, meta), `${base}.3mf`)
         break
       case 'skadis':
-        downloadBlob(exportSkadis3MF(design.skadis), `${base}.3mf`)
+        downloadBlob(exportSkadis3MF(design.skadis, meta), `${base}.3mf`)
+        break
+      case 'litho':
+        prepareLithoImage(design.litho).then(() =>
+          downloadBlob(exportLitho3MF(design.litho, meta), `${base}.3mf`),
+        )
         break
       default:
         assertNever(design.type)
@@ -118,6 +143,10 @@ export default function Sidebar({
         break
       case 'skadis':
         downloadBlob(exportSkadisSTEP(design.skadis), `${base}.step`)
+        break
+      case 'litho':
+        // No STEP for lithophanes (the button is hidden): a faceted B-rep of a
+        // ~200k-triangle relief would be enormous and useless in CAD.
         break
       default:
         assertNever(design.type)
@@ -151,6 +180,15 @@ export default function Sidebar({
           <SkadisControls
             model={design.skadis}
             setModel={setSkadis}
+            showBuildPlate={showBuildPlate}
+            setShowBuildPlate={setShowBuildPlate}
+          />
+        )
+      case 'litho':
+        return (
+          <LithoControls
+            model={design.litho}
+            setModel={setLitho}
             showBuildPlate={showBuildPlate}
             setShowBuildPlate={setShowBuildPlate}
           />
@@ -203,14 +241,16 @@ export default function Sidebar({
           >
             Export 3MF
           </button>
-          <button
-            className="btn"
-            disabled={!ready}
-            title="Download a STEP file for CAD. Faceted B-rep solid — imports as a real body, but the faces are triangles (not editable as parametric surfaces)."
-            onClick={doExportSTEP}
-          >
-            Export STEP
-          </button>
+          {design.type !== 'litho' && (
+            <button
+              className="btn"
+              disabled={!ready}
+              title="Download a STEP file for CAD. Faceted B-rep solid — imports as a real body, but the faces are triangles (not editable as parametric surfaces)."
+              onClick={doExportSTEP}
+            >
+              Export STEP
+            </button>
+          )}
         </div>
       </header>
 
@@ -374,10 +414,30 @@ function BoxControls({
             Hinged lid
           </button>
         </div>
+        {hinged && (
+          <Field label="Hinge style">
+            <div className="seg">
+              <button
+                className={model.hingeStyle !== 'top' ? 'active' : ''}
+                onClick={() => patch({ hingeStyle: 'flat' })}
+              >
+                Fold-flat
+              </button>
+              <button
+                className={model.hingeStyle === 'top' ? 'active' : ''}
+                onClick={() => patch({ hingeStyle: 'top' })}
+              >
+                Snap-on top
+              </button>
+            </div>
+          </Field>
+        )}
         <p className="hint">
-          {hinged
-            ? 'Print-in-place hinged lid: prints open & flat (box + lid joined at the back hinge). Folds closed with an overlapping lip + snap.'
-            : 'Sliding lid: slides into grooves in the side walls, inserts from the front.'}
+          {!hinged
+            ? 'Sliding lid: slides into grooves in the side walls, inserts from the front.'
+            : model.hingeStyle === 'top'
+              ? 'Chest-style hinge at the top back edge. Box and lid print as two separate parts (lid top-side down); one press snaps the lid’s hinge clips onto the pin and the front bead into its groove.'
+              : 'Print-in-place hinged lid: prints open & flat (box + lid joined at the back hinge). Folds closed with an overlapping lip + snap.'}
         </p>
       </Section>
 
@@ -587,6 +647,166 @@ function SkadisControls({
         </Field>
         <p className="hint">
           Gap on the pegboard hooks. 0.2–0.4mm is typical; increase if the hooks won't seat.
+        </p>
+      </Section>
+    </>
+  )
+}
+
+// ---------- Lithophane controls ----------
+
+function LithoControls({
+  model,
+  setModel,
+  showBuildPlate,
+  setShowBuildPlate,
+}: {
+  model: LithoModel
+  setModel: (m: LithoModel) => void
+  showBuildPlate: boolean
+  setShowBuildPlate: (v: boolean) => void
+}) {
+  const [inches, setInches] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const patch = (p: Partial<LithoModel>) => setModel({ ...model, ...p })
+  const fmtLen = (mm: number) =>
+    inches ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`
+
+  const round = model.shape === 'round'
+  const shapes: { id: LithoShape; label: string }[] = [
+    { id: 'rect', label: 'Rectangle' },
+    { id: 'round', label: 'Round' },
+  ]
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const { dataUrl, width: iw, height: ih } = await imageFileToDataURL(file)
+      const p: Partial<LithoModel> = { image: dataUrl }
+      // Match the rect panel's aspect to the picture so nothing gets cropped.
+      if (model.shape === 'rect') p.height = clamp(model.width * (ih / iw), 20, 300)
+      patch(p)
+    } catch {
+      // unreadable file — leave the model unchanged
+    }
+    e.target.value = '' // allow re-uploading the same file
+  }
+
+  return (
+    <>
+      <Section title="Image" defaultOpen>
+        <div className="litho-upload">
+          <button className="btn small" onClick={() => fileRef.current?.click()}>
+            {model.image ? 'Replace image…' : 'Upload image…'}
+          </button>
+          {model.image && (
+            <button className="btn small" onClick={() => patch({ image: null })}>
+              Remove
+            </button>
+          )}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={onFile}
+          />
+        </div>
+        {model.image ? (
+          <img className="litho-preview" src={model.image} alt="lithophane source" />
+        ) : (
+          <p className="hint">
+            Upload a photo to emboss. Until then the panel previews at a uniform mid thickness.
+          </p>
+        )}
+        <Toggle label="Invert (negative)" checked={model.invert}
+          onChange={(v) => patch({ invert: v })} />
+        <p className="hint">
+          Dark areas print thick, light areas thin — backlight the print to reveal the picture.
+          The image covers the panel and any aspect-ratio overflow is cropped.
+        </p>
+      </Section>
+
+      <Section title="Shape & size" defaultOpen>
+        <div className="seg">
+          {shapes.map((s) => (
+            <button
+              key={s.id}
+              className={model.shape === s.id ? 'active' : ''}
+              onClick={() => patch({ shape: s.id })}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <Field label={round ? 'Diameter' : 'Width (X)'}>
+          <NumberInput value={model.width} min={20} max={300} step={1} unit="mm"
+            onChange={(v) => patch({ width: v })} />
+        </Field>
+        {!round && (
+          <>
+            <Field label="Height (Y)">
+              <NumberInput value={model.height} min={20} max={300} step={1} unit="mm"
+                onChange={(v) => patch({ height: v })} />
+            </Field>
+            <Field label="Corner radius (0 = sharp)">
+              <NumberInput value={model.cornerRadius} min={0} max={40} step={0.5} unit="mm"
+                onChange={(v) => patch({ cornerRadius: v })} />
+            </Field>
+          </>
+        )}
+        {round && (
+          <p className="hint">
+            The bottom gets a small flat so the disc can stand on the print bed.
+          </p>
+        )}
+        <Measurements
+          size={{ x: model.width, y: round ? model.width : model.height, z: model.maxThickness }}
+          fmtLen={fmtLen} inches={inches} setInches={setInches}
+        />
+      </Section>
+
+      <Section title="Relief" defaultOpen>
+        <Field label="Min thickness (lightest)">
+          <NumberInput value={model.minThickness} min={0.4} max={3} step={0.1} unit="mm"
+            onChange={(v) => patch({ minThickness: v })} />
+        </Field>
+        <Field label="Max thickness (darkest)">
+          <NumberInput value={model.maxThickness} min={1} max={8} step={0.1} unit="mm"
+            onChange={(v) => patch({ maxThickness: v })} />
+        </Field>
+        <Field label="Detail (sample size)">
+          <NumberInput value={model.pitch} min={0.2} max={1} step={0.05} unit="mm"
+            onChange={(v) => patch({ pitch: v })} />
+        </Field>
+        <p className="hint">
+          0.8 / 3.0 mm is the classic range for translucent filament. Smaller samples mean finer
+          detail but a heavier model; very large panels cap the effective detail automatically.
+        </p>
+      </Section>
+
+      <Section title="Mounting" defaultOpen>
+        <Toggle label="Hanging hole" checked={model.mountHole}
+          onChange={(v) => patch({ mountHole: v })} />
+        {model.mountHole && (
+          <Field label="Hole diameter">
+            <NumberInput value={model.mountHoleDiameter} min={2} max={12} step={0.5} unit="mm"
+              onChange={(v) => patch({ mountHoleDiameter: v })} />
+          </Field>
+        )}
+        <p className="hint">
+          {model.mountHole
+            ? 'A through-hole centred near the top edge, for a nail or cord.'
+            : 'Optional through-hole near the top edge for hanging.'}
+        </p>
+      </Section>
+
+      <Section title="General" defaultOpen>
+        <Toggle label="Show Build Plate" checked={showBuildPlate} onChange={setShowBuildPlate} />
+        <p className="hint">
+          Prints standing up (as previewed) so the layer lines run across the image — the standard
+          lithophane orientation. Use a brim for bed adhesion.
         </p>
       </Section>
     </>

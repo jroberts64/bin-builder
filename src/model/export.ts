@@ -4,6 +4,7 @@ import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferG
 import { BinModel } from './types'
 import { BoxModel } from './box'
 import { SkadisModel } from './skadis'
+import { LithoModel, buildLitho } from './litho'
 import { buildBin } from './geometry'
 import { buildBox } from './box'
 import { buildSkadis } from './skadis'
@@ -16,18 +17,59 @@ function toZUp(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   return g
 }
 
-function geometryToSTL(geom: THREE.BufferGeometry): Blob {
-  const mesh = new THREE.Mesh(geom)
-  const stl = new STLExporter().parse(mesh, { binary: true }) as unknown as DataView
-  return new Blob([stl as unknown as ArrayBuffer], { type: 'model/stl' })
+// Optional design metadata (the serialized Design JSON) is appended to the
+// binary STL as a trailing footer: [json bytes][uint32 length LE][8-byte magic].
+// A binary STL reader consumes exactly `count` triangles and ignores anything
+// after, so slicers still load the mesh; a reader that knows the magic can
+// recover the JSON from the end without parsing the mesh. This deliberately
+// breaks the `84 + tris*50` size equality, so any strict size validator (and
+// our own verification) must strip the footer first — see readStlMeta.
+const STL_META_MAGIC = 'BINBLDR1' // 8 ASCII bytes
+
+function appendStlMeta(stl: ArrayBuffer, metaJson: string): ArrayBuffer {
+  const enc = new TextEncoder()
+  const json = enc.encode(metaJson)
+  const magic = enc.encode(STL_META_MAGIC)
+  const out = new Uint8Array(stl.byteLength + json.length + 4 + magic.length)
+  out.set(new Uint8Array(stl), 0)
+  let p = stl.byteLength
+  out.set(json, p)
+  p += json.length
+  new DataView(out.buffer).setUint32(p, json.length, true)
+  p += 4
+  out.set(magic, p)
+  return out.buffer
+}
+
+// Recover the embedded design JSON from an STL exported with a metadata footer,
+// or null if the footer is absent/malformed. Symmetric with appendStlMeta.
+export function readStlMeta(stl: ArrayBuffer): string | null {
+  const bytes = new Uint8Array(stl)
+  const magic = new TextEncoder().encode(STL_META_MAGIC)
+  const foot = magic.length + 4
+  if (bytes.length < foot) return null
+  for (let i = 0; i < magic.length; i++) {
+    if (bytes[bytes.length - magic.length + i] !== magic[i]) return null
+  }
+  const lenAt = bytes.length - foot
+  const len = new DataView(bytes.buffer, bytes.byteOffset).getUint32(lenAt, true)
+  const start = lenAt - len
+  if (start < 84) return null
+  return new TextDecoder().decode(bytes.subarray(start, lenAt))
+}
+
+function geometryToSTL(geom: THREE.BufferGeometry, meta?: string): Blob {
+  const bytes = stlBytes(geom)
+  const out = meta ? appendStlMeta(bytes, meta) : bytes
+  return new Blob([out], { type: 'model/stl' })
 }
 
 function exportGeometry(model: BinModel): THREE.BufferGeometry {
   return toZUp(buildBin(model).geometry)
 }
 
-export function exportSTL(model: BinModel): Blob {
-  return geometryToSTL(exportGeometry(model))
+export function exportSTL(model: BinModel, meta?: string): Blob {
+  return geometryToSTL(exportGeometry(model), meta)
 }
 
 export function exportSTEP(model: BinModel): Blob {
@@ -40,36 +82,54 @@ function skadisExportGeometry(model: SkadisModel): THREE.BufferGeometry {
   return toZUp(buildSkadis(model).geometry)
 }
 
-export function exportSkadisSTL(model: SkadisModel): Blob {
-  return geometryToSTL(skadisExportGeometry(model))
+export function exportSkadisSTL(model: SkadisModel, meta?: string): Blob {
+  return geometryToSTL(skadisExportGeometry(model), meta)
 }
 
-export function exportSkadis3MF(model: SkadisModel): Blob {
-  return geometryToBlob3MF(skadisExportGeometry(model))
+export function exportSkadis3MF(model: SkadisModel, meta?: string): Blob {
+  return geometryToBlob3MF(skadisExportGeometry(model), meta)
 }
 
 export function exportSkadisSTEP(model: SkadisModel): Blob {
   return geometriesToBlobSTEP([skadisExportGeometry(model)], 'skadis')
 }
 
+// --- Lithophane: one fused mesh, like the bin. No STEP export — a faceted
+// B-rep of a 200k-triangle relief would be enormous and useless in CAD. -------
+
+function lithoExportGeometry(model: LithoModel): THREE.BufferGeometry {
+  return toZUp(buildLitho(model).geometry)
+}
+
+export function exportLithoSTL(model: LithoModel, meta?: string): Blob {
+  return geometryToSTL(lithoExportGeometry(model), meta)
+}
+
+export function exportLitho3MF(model: LithoModel, meta?: string): Blob {
+  return geometryToBlob3MF(lithoExportGeometry(model), meta)
+}
+
 // --- Sliding-lid box: box body + lid as TWO separate objects, laid out side by
 // side on the plate. 3MF keeps them as distinct objects; STL (which has no
 // object concept) ships two files in a zip. -----------------------------------
 
-// Return the box and lid as two Z-up geometries. For a SLIDING box the two
-// parts are separated side by side on the plate (they're assembled by hand). For
-// a HINGED box they're a print-in-place assembly, so they stay exactly as
-// modelled (interlocked at the hinge) and are only dropped to the plate.
+// Return the box and lid as two Z-up geometries. A flat-hinged box is a
+// print-in-place assembly, so both parts stay exactly as modelled (interlocked
+// at the hinge). Everything else (sliding, snap-on top hinge) is two separate
+// hand-assembled parts: the lid is placed beside the box on the plate — and
+// for the top hinge it's first flipped over, since it's modelled closed
+// (lip down) but prints top-side down (lip up).
 function boxExportParts(model: BoxModel): { box: THREE.BufferGeometry; lid: THREE.BufferGeometry } {
   const { box, lid, size } = buildBox(model)
   const boxG = box.clone()
   const lidG = lid.clone()
-  if (model.topType === 'hinged') {
+  if (model.topType === 'hinged' && model.hingeStyle === 'flat') {
     // Keep relative positions (the hinge must print in place). Both already sit
     // on Y=0 as modelled; just convert to Z-up.
     return { box: toZUp(boxG), lid: toZUp(lidG) }
   }
-  // Sliding: drop the lid to the plate and place it beside the box with a gap.
+  if (model.topType === 'hinged') lidG.rotateX(Math.PI) // top hinge: print orientation
+  // Drop the lid to the plate and place it beside the box with a gap.
   lidG.computeBoundingBox()
   const lb = lidG.boundingBox!
   lidG.translate(0, -lb.min.y, 0)
@@ -77,26 +137,36 @@ function boxExportParts(model: BoxModel): { box: THREE.BufferGeometry; lid: THRE
   return { box: toZUp(boxG), lid: toZUp(lidG) }
 }
 
-export function exportBox3MF(model: BoxModel): Blob {
+export function exportBox3MF(model: BoxModel, meta?: string): Blob {
   const { box, lid } = boxExportParts(model)
   // Two <object>s, in their export positions (interlocked for hinged, apart for
   // sliding) — slicers load them as two objects either way.
-  return geometriesToBlob3MF([box, lid])
+  return geometriesToBlob3MF([box, lid], meta)
 }
 
 // STL export for a box. STL has no notion of separate objects, so:
-//   - hinged: a single print-in-place assembly → one combined .stl (Blob, .stl)
-//   - sliding: two hand-assembled parts → two .stl files in a .zip
+//   - flat-hinged: a single print-in-place assembly → one combined .stl
+//   - sliding / top-hinged: two hand-assembled parts → two .stl files in a .zip
 // Returns the blob and the file extension to use.
-export function exportBoxSTL(model: BoxModel, baseName: string): { blob: Blob; ext: string } {
+export function exportBoxSTL(
+  model: BoxModel,
+  baseName: string,
+  meta?: string,
+): { blob: Blob; ext: string } {
   const { box, lid } = boxExportParts(model)
-  if (model.topType === 'hinged') {
+  if (model.topType === 'hinged' && model.hingeStyle === 'flat') {
     const combined = mergeGeometries([box, lid], false)!
-    return { blob: geometryToSTL(combined), ext: 'stl' }
+    return { blob: geometryToSTL(combined, meta), ext: 'stl' }
+  }
+  // Two separate .stls in a .zip — footer the design onto each part so either
+  // file alone carries the full design.
+  const withMeta = (g: THREE.BufferGeometry) => {
+    const b = stlBytes(g)
+    return new Uint8Array(meta ? appendStlMeta(b, meta) : b)
   }
   const zip = zipStoreBinary([
-    { name: `${baseName}-box.stl`, data: new Uint8Array(stlBytes(box)) },
-    { name: `${baseName}-lid.stl`, data: new Uint8Array(stlBytes(lid)) },
+    { name: `${baseName}-box.stl`, data: withMeta(box) },
+    { name: `${baseName}-lid.stl`, data: withMeta(lid) },
   ])
   return { blob: new Blob([zip as unknown as ArrayBuffer], { type: 'application/zip' }), ext: 'zip' }
 }
@@ -119,12 +189,20 @@ function stlBytes(geom: THREE.BufferGeometry): ArrayBuffer {
 // 3MF is an OPC (ZIP) package containing a 3D model XML in millimetres. We emit
 // the smallest valid package: [Content_Types].xml, _rels/.rels and 3dmodel.model.
 
-export function export3MF(model: BinModel): Blob {
-  return geometryToBlob3MF(exportGeometry(model))
+export function export3MF(model: BinModel, meta?: string): Blob {
+  return geometryToBlob3MF(exportGeometry(model), meta)
 }
 
-function geometryToBlob3MF(geom: THREE.BufferGeometry): Blob {
-  return geometriesToBlob3MF([geom])
+function geometryToBlob3MF(geom: THREE.BufferGeometry, meta?: string): Blob {
+  return geometriesToBlob3MF([geom], meta)
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
 // One <object> with a <mesh> for a single geometry, numbered by id.
@@ -157,13 +235,21 @@ function meshObjectXml(geom: THREE.BufferGeometry, id: number): string {
 // Emit one 3MF package containing each geometry as its OWN object, so slicers
 // load them as separate objects (no "split to parts" needed). Geometries must
 // already be positioned (e.g. laid out side by side) in Z-up mm.
-function geometriesToBlob3MF(geoms: THREE.BufferGeometry[]): Blob {
+function geometriesToBlob3MF(geoms: THREE.BufferGeometry[], meta?: string): Blob {
   const objects = geoms.map((g, i) => meshObjectXml(g, i + 1)).join('')
   const items = geoms.map((_, i) => `<item objectid="${i + 1}"/>`).join('')
 
+  // Custom design metadata via a namespaced <metadata> element (3MF core: a
+  // colon in `name` must reference a declared namespace; metadata precedes
+  // <resources>). Standards-clean, unlike the STL footer.
+  const metaXml = meta
+    ? `<metadata name="bb:design">${escapeXml(meta)}</metadata>\n`
+    : ''
+
   const modelXml =
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n` +
+    `<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:bb="https://bin-builder.local/3mf/design">\n` +
+    metaXml +
     `<resources>${objects}</resources>\n` +
     `<build>${items}</build>\n` +
     `</model>`

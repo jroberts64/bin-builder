@@ -9,8 +9,9 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
 
 ## Features
 
-- **Three object types** — a Gridfinity-style **bin**, a **box** with a choice
-  of top, or a **Skadis** pegboard holder. Switch via the header tabs.
+- **Four object types** — a Gridfinity-style **bin**, a **box** with a choice
+  of top, a **Skadis** pegboard holder, or a **lithophane** panel. Switch via
+  the header tabs.
 - **Box tops** — define the inner width/depth/height, then pick a top type:
   - **Sliding lid** — slides into grooves in the side walls, inserts from the
     front, seats against the closed back. Exports box + lid as two parts.
@@ -29,6 +30,16 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     to a **snap** catch to a strong **wrap clip** (with an inline ℹ️ explaining
     each). All seat the plate flush against the board.
   - Exports as one fused part; hook fit follows the ~0.2–0.4mm FDM sweet spot.
+- **Lithophanes** — upload a photo and it's embossed as varying thickness in a
+  panel that reveals the picture when backlit (dark = thick, invertible):
+  - **Rectangle** (adjustable corner radius) or **round** — round panels get a
+    small bottom flat so the disc stands on the bed.
+  - **Relief range** — min/max thickness (0.8–3mm classic) and a detail
+    (sample size) control.
+  - **Hanging hole** — optional through-hole near the top edge.
+  - Previews (and exports) standing up, the recommended print orientation.
+    Exports STL/3MF; the image persists with saves but is left out of share
+    links (too big for a URL).
 - **Gridfinity toggle** — switch the Gridfinity foot, baseplate clearance and
   magnet/screw sockets on or off. Off = a plain flat-bottomed tray. Independent
   of how the bin is sized.

@@ -1,6 +1,7 @@
 import { BinModel, Divider, LipStyle, SocketStyle, defaultBin } from './types'
 import { BoxModel, defaultBox } from './box'
 import { SkadisModel, HolderShape, HookStyle, defaultSkadis } from './skadis'
+import { LithoModel, LithoShape, defaultLitho } from './litho'
 
 // Versioned (de)serialization for a design. Everything that persists or shares —
 // localStorage, .json files, share URLs — goes through here so there is exactly
@@ -11,14 +12,14 @@ import { SkadisModel, HolderShape, HookStyle, defaultSkadis } from './skadis'
 
 export const SCHEMA_VERSION = 2
 
-export type ObjectType = 'bin' | 'box' | 'skadis'
+export type ObjectType = 'bin' | 'box' | 'skadis' | 'litho'
 
 // The single source of truth for the set of object types. Iterate this to build
 // UI/validation instead of hardcoding the members, and pair every `switch` on an
 // ObjectType with `assertNever` in its default so adding a member to the union
 // turns each unhandled dispatch into a compile error (the checklist for a new
 // type — see the "Adding a third object type" recipe in CLAUDE.md).
-export const OBJECT_TYPES: readonly ObjectType[] = ['bin', 'box', 'skadis']
+export const OBJECT_TYPES: readonly ObjectType[] = ['bin', 'box', 'skadis', 'litho']
 
 // Exhaustiveness guard. Reaching it means an ObjectType was added without
 // updating this dispatch; the `never` parameter makes that a compile error.
@@ -33,10 +34,17 @@ export interface Design {
   bin: BinModel
   box: BoxModel
   skadis: SkadisModel
+  litho: LithoModel
 }
 
 export function defaultDesign(): Design {
-  return { type: 'bin', bin: defaultBin(), box: defaultBox(), skadis: defaultSkadis() }
+  return {
+    type: 'bin',
+    bin: defaultBin(),
+    box: defaultBox(),
+    skadis: defaultSkadis(),
+    litho: defaultLitho(),
+  }
 }
 
 export interface SavedDesign {
@@ -46,6 +54,7 @@ export interface SavedDesign {
   bin: BinModel
   box: BoxModel
   skadis: SkadisModel
+  litho: LithoModel
 }
 
 const LIPS: LipStyle[] = ['default', 'thin', 'none']
@@ -86,6 +95,7 @@ export function coerceBox(raw: unknown): BoxModel {
   const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<BoxModel>
   return {
     topType: oneOf(m.topType, ['sliding', 'hinged'], d.topType),
+    hingeStyle: oneOf(m.hingeStyle, ['flat', 'top'], d.hingeStyle),
     innerW: num(m.innerW, d.innerW, 10, 400),
     innerD: num(m.innerD, d.innerD, 10, 400),
     innerH: num(m.innerH, d.innerH, 5, 300),
@@ -118,6 +128,36 @@ export function coerceSkadis(raw: unknown): SkadisModel {
     openingDeg: num(m.openingDeg, d.openingDeg, 0, 300),
     hookStyle: oneOf(m.hookStyle, HOOK_STYLES, d.hookStyle),
     clearance: num(m.clearance, d.clearance, 0, 1),
+  }
+}
+
+const LITHO_SHAPES: LithoShape[] = ['rect', 'round']
+
+// The litho image is a data URL. Cap the size so a hostile payload can't bloat
+// localStorage through the coerce path; anything unrecognisable → no image.
+function coerceLithoImage(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  if (!value.startsWith('data:image/')) return null
+  if (value.length > 2_000_000) return null
+  return value
+}
+
+// Turn arbitrary parsed JSON into a guaranteed-valid LithoModel.
+export function coerceLitho(raw: unknown): LithoModel {
+  const d = defaultLitho()
+  const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<LithoModel>
+  return {
+    shape: oneOf(m.shape, LITHO_SHAPES, d.shape),
+    image: coerceLithoImage(m.image),
+    width: num(m.width, d.width, 20, 300),
+    height: num(m.height, d.height, 20, 300),
+    cornerRadius: num(m.cornerRadius, d.cornerRadius, 0, 40),
+    minThickness: num(m.minThickness, d.minThickness, 0.4, 3),
+    maxThickness: num(m.maxThickness, d.maxThickness, 1, 8),
+    pitch: num(m.pitch, d.pitch, 0.2, 1),
+    invert: bool(m.invert, d.invert),
+    mountHole: bool(m.mountHole, d.mountHole),
+    mountHoleDiameter: num(m.mountHoleDiameter, d.mountHoleDiameter, 2, 12),
   }
 }
 
@@ -159,12 +199,25 @@ export function coerceDesign(raw: unknown): Design {
       bin: coerceModel(o.bin),
       box: coerceBox(o.box),
       skadis: coerceSkadis(o.skadis),
+      litho: coerceLitho(o.litho),
     }
   }
   if ('model' in o) {
-    return { type: 'bin', bin: coerceModel(o.model), box: defaultBox(), skadis: defaultSkadis() }
+    return {
+      type: 'bin',
+      bin: coerceModel(o.model),
+      box: defaultBox(),
+      skadis: defaultSkadis(),
+      litho: defaultLitho(),
+    }
   }
-  return { type: 'bin', bin: coerceModel(raw), box: defaultBox(), skadis: defaultSkadis() }
+  return {
+    type: 'bin',
+    bin: coerceModel(raw),
+    box: defaultBox(),
+    skadis: defaultSkadis(),
+    litho: defaultLitho(),
+  }
 }
 
 // --- public API ---
@@ -177,6 +230,7 @@ export function serializeDesign(design: Design, name?: string): SavedDesign {
     bin: design.bin,
     box: design.box,
     skadis: design.skadis,
+    litho: design.litho,
   }
 }
 
@@ -209,8 +263,13 @@ function base64UrlDecode(s: string): string {
 }
 
 export function encodeShareParam(design: Design, name?: string): string {
+  const saved = serializeDesign(design, name)
+  // The litho image data-URL would blow the URL far past practical limits, so
+  // share links carry the litho settings only (localStorage/.json keep the
+  // image). The recipient re-uploads the picture.
+  if (saved.litho.image) saved.litho = { ...saved.litho, image: null }
   // Minify (no pretty-print) for shorter URLs.
-  return base64UrlEncode(JSON.stringify(serializeDesign(design, name)))
+  return base64UrlEncode(JSON.stringify(saved))
 }
 
 export function decodeShareParam(param: string): { design: Design; name?: string } | null {

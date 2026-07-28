@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildBin } from './model/geometry'
 import { buildBox } from './model/box'
 import { buildSkadis } from './model/skadis'
+import { buildLitho, prepareLithoImage } from './model/litho'
 import { Design, assertNever } from './model/serialize'
 
 interface Props {
@@ -126,6 +127,9 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
           case 'skadis':
             group.add(new THREE.Mesh(buildSkadis(design.skadis).geometry, mat(0x4a9eff)))
             break
+          case 'litho':
+            group.add(new THREE.Mesh(buildLitho(design.litho).geometry, mat(0x4a9eff)))
+            break
           default:
             assertNever(design.type)
         }
@@ -137,8 +141,26 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
       partsRef.current = group
     }
 
-    const t = setTimeout(rebuild, 80)
-    return () => clearTimeout(t)
+    // The litho image decodes asynchronously (browser image pipeline); make sure
+    // it's in the cache before the synchronous build. `cancelled` guards against
+    // a stale decode resolving after the design has already changed again.
+    let cancelled = false
+    const t = setTimeout(() => {
+      if (design.type === 'litho') {
+        prepareLithoImage(design.litho).then(
+          () => {
+            if (!cancelled) rebuild()
+          },
+          (err) => console.error('litho image failed', err),
+        )
+      } else {
+        rebuild()
+      }
+    }, 80)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
   }, [design, ready])
 
   // --- Build plate grid ---

@@ -76,6 +76,14 @@ export function csgAdd(...geoms: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return fromManifold(result)
 }
 
+export function csgIntersect(
+  a: THREE.BufferGeometry,
+  b: THREE.BufferGeometry,
+): THREE.BufferGeometry {
+  const { Manifold } = requireWasm()
+  return fromManifold(Manifold.intersection(toManifold(a), toManifold(b)))
+}
+
 export function csgSubtract(
   base: THREE.BufferGeometry,
   ...tools: THREE.BufferGeometry[]

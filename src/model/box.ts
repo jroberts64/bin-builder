@@ -20,12 +20,20 @@ const EPS = 0.05
 
 // The box supports two top types:
 //   'sliding' — lid slides into grooves in the side walls (the original)
-//   'hinged'  — lid is hinged at the back via a print-in-place pin hinge, with
-//               an overlapping lip + snap bead to hold it shut
+//   'hinged'  — lid is hinged at the back via a pin hinge, with an overlapping
+//               lip + snap bead to hold it shut
 export type BoxTop = 'sliding' | 'hinged'
+
+// Hinged boxes come in two hinge styles:
+//   'flat' — print-in-place: box + lid print as one joined piece, open & flat,
+//            folding closed via the pin hinge + a living-hinge wrap (below)
+//   'top'  — chest-style snap-on: hinge at the top back edge; box and lid print
+//            as two separate parts and the lid's C-clips press onto the pin
+export type HingeStyle = 'flat' | 'top'
 
 export interface BoxModel {
   topType: BoxTop
+  hingeStyle: HingeStyle // only meaningful when topType === 'hinged'
   innerW: number // mm, X (left-right)
   innerD: number // mm, Y depth (front-back; slide axis for sliding, hinge at back)
   innerH: number // mm, Z height (cavity)
@@ -37,6 +45,7 @@ export interface BoxModel {
 export function defaultBox(): BoxModel {
   return {
     topType: 'sliding',
+    hingeStyle: 'flat',
     innerW: 80,
     innerD: 120,
     innerH: 30,
@@ -44,6 +53,15 @@ export function defaultBox(): BoxModel {
     lidThickness: 2.4,
     clearance: 0.2,
   }
+}
+
+// Shared hinge stock derived from the wall/clearance — used by both hinge
+// styles (and by boxOuterSize) so the proportions stay consistent.
+function hingeStock(m: BoxModel): { pinR: number; boreGap: number; barrelR: number } {
+  const pinR = Math.max(1.4, m.wall * 0.6) // pin radius
+  const boreGap = Math.max(0.25, m.clearance + 0.05) // pin→bore clearance (research: 0.2–0.3)
+  const barrelR = pinR + boreGap + Math.max(1.0, m.wall * 0.5) // knuckle outer radius
+  return { pinR, boreGap, barrelR }
 }
 
 export interface BuiltBox {
@@ -76,8 +94,18 @@ export function boxOuterSize(m: BoxModel): { x: number; y: number; z: number } {
   if (m.topType === 'hinged') {
     // Closed: cavity + floor + lid on top; lip overlaps the outside of the walls.
     const lipWall = Math.max(1, m.wall * 0.6)
+    const x = m.innerW + 2 * m.wall + 2 * (m.clearance + lipWall)
+    if (m.hingeStyle === 'top') {
+      // Chest hinge adds boss columns above the lid and knuckles behind the box.
+      const { pinR, barrelR } = hingeStock(m)
+      return {
+        x,
+        y: m.innerD + 2 * m.wall + (m.clearance + lipWall) + 2 * barrelR + m.clearance,
+        z: m.wall + m.innerH + m.lidThickness + (pinR + 1.7) + pinR + 1.2,
+      }
+    }
     return {
-      x: m.innerW + 2 * m.wall + 2 * (m.clearance + lipWall),
+      x,
       y: m.innerD + 2 * m.wall,
       z: m.wall + m.innerH + m.lidThickness,
     }
@@ -90,7 +118,8 @@ export function boxOuterSize(m: BoxModel): { x: number; y: number; z: number } {
 }
 
 export function buildBox(m: BoxModel): BuiltBox {
-  return m.topType === 'hinged' ? buildHingedBox(m) : buildSlidingBox(m)
+  if (m.topType !== 'hinged') return buildSlidingBox(m)
+  return m.hingeStyle === 'top' ? buildTopHingedBox(m) : buildHingedBox(m)
 }
 
 function buildSlidingBox(m: BoxModel): BuiltBox {
@@ -252,13 +281,21 @@ function buildSlidingBox(m: BoxModel): BuiltBox {
 // Research-backed clearances (FDM, 0.4mm nozzle): 0.2–0.3mm pin-to-bore gap;
 // never print the bore on the Z axis (we don't); knuckle gaps >= clearance.
 //
-//   side view (printed/open):
-//        cavity
-//      ┌────────┐
-//      │  box   │   ╔════════ lid (flat on plate) ════════╗
-//      │        │ ◯ hinge axis (knuckles + pin, at plate)
+// The lid needs TWO articulations to close: the pin hinge alone can't do it,
+// because rotating a rigid slab about the plate-level axis sweeps it straight
+// into the box back wall — the lid has to wrap AROUND the wall. So the flat
+// lid is riser → living hinge → panel (see the lid section below).
+//
+//   side view (printed/open):                living hinge (thin band)
+//        cavity                                   ↓
+//      ┌────────┐   ╔═ riser ═╗▁▁▁╔═════ lid panel ═════╗
+//      │  box   │ ◯ hinge axis (knuckles + pin, at plate)
 //      └────────┴───┘
 //      Y=0 ───────────────────────────────────────────────
+//
+//   closing: fold ~90° at the pin (the riser stands up behind the back wall,
+//   spanning its height), then the living hinge bends ~90° more around the
+//   top back edge so the panel lands flat on the rim.
 function buildHingedBox(m: BoxModel): BuiltBox {
   const wall = m.wall
   const c = m.clearance
@@ -287,9 +324,7 @@ function buildHingedBox(m: BoxModel): BuiltBox {
   // --- Hinge geometry ------------------------------------------------------
   // Knuckle barrels run along X, centred on the hinge axis at the bottom-back
   // outer edge, sitting on the plate. Odd count so both ends are box knuckles.
-  const pinR = Math.max(1.4, wall * 0.6) // pin radius
-  const boreGap = Math.max(0.25, c + 0.05) // pin→bore clearance (research: 0.2–0.3)
-  const barrelR = pinR + boreGap + Math.max(1.0, wall * 0.5) // knuckle outer radius
+  const { pinR, boreGap, barrelR } = hingeStock(m)
   const axisY = barrelR // axis height so barrels rest on the plate
   // Hinge axis sits behind the box back wall by the full barrel radius + a
   // clearance, so the LID knuckle barrels (which reach forward to axisZ+barrelR)
@@ -345,22 +380,53 @@ function buildHingedBox(m: BoxModel): BuiltBox {
   body.computeBoundingBox()
 
   // --- Lid (lies flat on the plate behind the box) -------------------------
-  // Overlapping-lip lid: panel + a downward rim that, when closed, wraps the
-  // outside of the box walls. Modelled flat: panel on the plate extending −Z
-  // from the hinge, lip pointing up (becomes downward when folded over).
+  // Three sections, hinge edge outward (−Z):
+  //   • RISER — rigid strip fused to the pin-hinge connectors; folds ~90° up
+  //     at the pin and stands behind the back wall, spanning its height.
+  //   • LIVING HINGE — a thin full-width membrane (bandT, 2–3 print layers)
+  //     left at the PLATE side of the slab, so it prints solid with no
+  //     bridging; bends ~90° around the box's top back edge when closing.
+  //   • PANEL — the lid proper: overlapping lip + snap bead, modelled flat
+  //     with the lip pointing up (downward once folded over onto the rim).
   //
   // CRITICAL: only the lid knuckles + pin may enter the hinge axis zone (they
-  // interleave with the box knuckles in the X-gaps). The full-width panel and
+  // interleave with the box knuckles in the X-gaps). The full-width slab and
   // lip rails MUST stop a clearance behind the box's rearmost hinge material
   // (the barrels reach back to axisZ - barrelR), or they fuse the lid to the
   // box knuckle barrels and the hinge won't move. lidHingeEdgeZ is that plane.
   const lipWall = Math.max(1, wall * 0.6)
-  const lidHingeEdgeZ = axisZ - barrelR - c // panel/lip front edge: clears box barrels
+  const lidHingeEdgeZ = axisZ - barrelR - c // slab front edge: clears box barrels
   const lidPanelW = outerW + 2 * (c + lipWall) // covers walls + lip
-  // Panel runs from its hinge edge back far enough to cover the closed box.
-  const lidPanelD = outerD + (c + lipWall)
-  const lidPanelZcenter = lidHingeEdgeZ - lidPanelD / 2
-  let lid = box(lidPanelW, lidT, lidPanelD, 0, lidT / 2, lidPanelZcenter)
+
+  // Living hinge band: thin enough to flex for the life of the part, long
+  // enough that the 90° bend stays gentle (bend radius = bandLen / (π/2)).
+  const bandT = Math.min(0.5, lidT * 0.4)
+  const bandLen = 5
+  const bendR = (2 * bandLen) / Math.PI
+
+  // Riser length, derived from the closed pose: the band should form a
+  // quarter arc hugging the top back edge — its start sits bendR behind the
+  // back face at height outerH + lidT/2 − bendR — and the rigid strip pivoting
+  // on the pin axis (connectors + riser) must reach from the axis to that
+  // point. The strip's mid-plane rides dPerp below the axis, hence the √ term.
+  // Err slightly long (+0.5): extra length just leans the riser / bows the
+  // band a touch; too short and the lid physically can't close.
+  const reachY = outerH + lidT / 2 - bendR - axisY
+  const reachZ = barrelR + c - bendR
+  const dPerp = axisY - lidT / 2
+  const reach2 = reachY * reachY + reachZ * reachZ - dPerp * dPerp
+  const riserD = Math.max(2, Math.sqrt(Math.max(0, reach2)) - (barrelR + c) + 0.5)
+
+  // Panel covers the rim (outerD) plus the front lip overhang when closed.
+  const panelD = outerD + (c + lipWall)
+  const slabD = riserD + bandLen + panelD
+  let lid = box(lidPanelW, lidT, slabD, 0, lidT / 2, lidHingeEdgeZ - slabD / 2)
+
+  // Living-hinge groove: cut the slab down to the bandT membrane, full width.
+  lid = csgSubtract(lid, box(
+    lidPanelW + 2, lidT - bandT + EPS, bandLen,
+    0, bandT + (lidT - bandT + EPS) / 2, lidHingeEdgeZ - riserD - bandLen / 2,
+  ))
 
   // Lid knuckles: solid barrels fused to the pin AND bridged back to the panel
   // hinge edge by connectors. Connectors live only in the lid X-bands (width
@@ -383,16 +449,17 @@ function buildHingedBox(m: BoxModel): BuiltBox {
     lid = csgAdd(lid, pin)
   }
 
-  // Downward lip rim around the 3 non-hinge edges (front, left, right). Modelled
-  // pointing +Y from the panel; folds to wrap the box outside when closed. The
-  // side rails run only along the panel (front edge → hinge edge), NOT into the
-  // hinge axis zone, so they never reach the box barrels.
+  // Downward lip rim around the 3 non-hinge edges of the PANEL section only.
+  // Modelled pointing +Y; folds to wrap the box outside when closed. The rails
+  // MUST NOT cross the living hinge (they'd stiffen it solid) and stay well
+  // clear of the hinge axis zone.
   const lipH = Math.max(2, m.innerH * 0.15)
-  const lipFrontZ = lidPanelZcenter - lidPanelD / 2 + lipWall / 2
+  const panelZcenter = lidHingeEdgeZ - riserD - bandLen - panelD / 2
+  const lipFrontZ = lidHingeEdgeZ - slabD + lipWall / 2
   lid = csgAdd(lid, box(lidPanelW, lipH + lidT, lipWall, 0, (lipH + lidT) / 2, lipFrontZ))
   for (const sx of [-1, 1]) {
     const lx = sx * (lidPanelW / 2 - lipWall / 2)
-    lid = csgAdd(lid, box(lipWall, lipH + lidT, lidPanelD, lx, (lipH + lidT) / 2, lidPanelZcenter))
+    lid = csgAdd(lid, box(lipWall, lipH + lidT, panelD, lx, (lipH + lidT) / 2, panelZcenter))
   }
 
   // Snap bead: a small ridge on the inside of the front lip that clicks past a
@@ -411,6 +478,161 @@ function buildHingedBox(m: BoxModel): BuiltBox {
   body.computeBoundingBox()
 
   // Overall closed size for the readout.
+  const sz = boxOuterSize(m)
+  return { box: body, lid, size: { x: sz.x, y: sz.y, z: sz.z } }
+}
+
+// Solid prism from a (z, y) cross-section extruded along X over [x0, x0+len].
+// Same role as prismZ in the sliding builder, for shapes that run across the
+// width (hinge boss columns). ExtrudeGeometry normalizes shape winding, and
+// the weld makes it a clean CSG input.
+function prismX(pts: [number, number][], x0: number, len: number): THREE.BufferGeometry {
+  const s = new THREE.Shape()
+  // Shape x carries -z so the rotation below lands z with the right sign.
+  s.moveTo(-pts[0][0], pts[0][1])
+  for (let i = 1; i < pts.length; i++) s.lineTo(-pts[i][0], pts[i][1])
+  s.closePath()
+  const g = new THREE.ExtrudeGeometry(s, { depth: len, bevelEnabled: false })
+  g.rotateY(Math.PI / 2) // extrusion axis +Z → +X; shape -x → +z
+  g.translate(x0, 0, 0)
+  return weld(g)
+}
+
+// Snap-on top-hinged box ("chest" style). Unlike the fold-flat design the two
+// parts print SEPARATELY (print the lid top-side down) and assemble with one
+// press: the lid's C-shaped knuckles snap over the box's hinge pin — the same
+// downward push also clicks the front bead into its groove. So the box + lid
+// are modelled ASSEMBLED in the closed position, and the exporters pull them
+// apart (like the sliding box).
+//
+//   side view (closed / as modelled):
+//                       arm ╻ ◎ ← pin in C-knuckle (lid) / boss column (box)
+//     ╔══ lid panel ══════╗ ╱ 45° gusset anchors the boss to the back wall
+//     ║ ┌─────────────────╨─┐
+//    lip│        box        │
+//       └───────────────────┘
+//
+// The hinge axis sits ABOVE the lid plane and BEHIND the back wall
+// (axisY = outerH + lidT + axisLift, axisZ = zBack − barrelR − c). The lift is
+// load-bearing, not styling: when the lid opens, the panel's back corners
+// sweep circles about the axis and cross the boss front plane at a height of
+// (their printed depth below the axis) above it — only an axis lifted past the
+// boss top keeps those crossings in free air. With the axis at panel height
+// every possible pin support collides with either the closed panel or its
+// swing. Don't lower axisLift below (bossTop − axisY) + margin.
+function buildTopHingedBox(m: BoxModel): BuiltBox {
+  const wall = m.wall
+  const c = m.clearance
+  const lidT = m.lidThickness
+
+  const floorH = wall
+  const outerW = m.innerW + 2 * wall
+  const outerD = m.innerD + 2 * wall
+  const outerH = floorH + m.innerH
+
+  const zFront = outerD / 2
+  const zBack = -outerD / 2
+
+  const { pinR, boreGap, barrelR } = hingeStock(m)
+  const axisLift = pinR + 1.7 // axis height above the lid top — see header note
+  const axisY = outerH + lidT + axisLift
+  const axisZ = zBack - barrelR - c // behind the wall so knuckles clear it by c
+  const bossTop = axisY + pinR + 1.2 // 1.2 of material over the pin
+
+  const knuckleCount = 5
+  const knuckleW = m.innerW / knuckleCount
+  const kGap = Math.max(0.3, c)
+
+  const lipWall = Math.max(1, wall * 0.6)
+  const lipH = Math.max(2, m.innerH * 0.15)
+  const beadR = 0.6
+  const grooveY = outerH - lipH / 2 // snap groove/bead height, mid-lip
+
+  // --- Box body: open-top box ----------------------------------------------
+  let body = box(outerW, outerH, outerD, 0, outerH / 2, 0)
+  const cavity = box(
+    m.innerW,
+    m.innerH + EPS,
+    m.innerD,
+    0,
+    floorH + m.innerH / 2 + EPS,
+    0,
+  )
+  body = csgSubtract(body, cavity)
+
+  // Boss columns (box knuckle bands): hold the pin above/behind the top back
+  // edge. Profile in (z, y): anchored EPS into the wall below the rim, stepped
+  // 0.25 behind the wall plane above it (the closed panel's back edge passes
+  // at zBack), flat top over the pin, and a ≥45° gusset underside so the
+  // column prints supportless off the back wall.
+  const bossBackZ = axisZ - pinR - 1.2
+  const gussetTopY = outerH - 1
+  const gussetBotY = Math.max(0.5, gussetTopY - (zBack + EPS - bossBackZ))
+  const bossPts: [number, number][] = [
+    [zBack + EPS, gussetBotY],
+    [zBack + EPS, outerH - 0.5],
+    [zBack - 0.25, outerH - 0.5],
+    [zBack - 0.25, bossTop],
+    [bossBackZ, bossTop],
+    [bossBackZ, gussetTopY],
+  ]
+  for (let i = 0; i < knuckleCount; i += 2) {
+    const cx = -m.innerW / 2 + knuckleW * (i + 0.5)
+    const w = knuckleW - kGap
+    body = csgAdd(body, prismX(bossPts, cx - w / 2, w))
+  }
+  // Pin: one rod through all bosses, exposed in the lid bands for the C-clips.
+  body = csgAdd(body, cylinderX(pinR, m.innerW + EPS, 0, axisY, axisZ))
+
+  // Front snap groove: a half-round channel in the front face that the lid's
+  // bead clicks into (the lip flexes ~beadR−c over the wall face on the way).
+  body = csgSubtract(body, cylinderX(beadR + 0.15, m.innerW * 0.5 + 2, 0, grooveY, zFront))
+
+  body = weld(body)
+  body.computeBoundingBox()
+
+  // --- Lid (modelled closed: panel on the rim, lip wrapping the walls) ------
+  const lidPanelW = outerW + 2 * (c + lipWall)
+  const panelD = outerD + c + lipWall // back rim edge → front lip outer face
+  const panelZc = zBack + panelD / 2
+  let lid = box(lidPanelW, lidT, panelD, 0, outerH + lidT / 2, panelZc)
+
+  // Downward lip on the 3 non-hinge edges + the snap bead on the front lip.
+  const lipRailH = lipH + lidT
+  const lipYc = outerH + lidT - lipRailH / 2
+  const lipFrontZ = zFront + c + lipWall / 2
+  lid = csgAdd(lid, box(lidPanelW, lipRailH, lipWall, 0, lipYc, lipFrontZ))
+  for (const sx of [-1, 1]) {
+    const lx = sx * (lidPanelW / 2 - lipWall / 2)
+    lid = csgAdd(lid, box(lipWall, lipRailH, panelD, lx, lipYc, panelZc))
+  }
+  lid = csgAdd(lid, cylinderX(beadR, m.innerW * 0.5, 0, grooveY, zFront + c))
+
+  // C-knuckles + arms (lid knuckle bands). Each is a barrel on the axis with
+  // the pin bore and a snap mouth cut from below — the mouth is narrower than
+  // the pin, so pressing the lid down flexes the C's arms over the pin and
+  // clicks on. The arm bridging knuckle → panel starts a play margin behind
+  // the pin's press channel (z > axisZ + pinR) or it would ram the pin before
+  // the C engages.
+  const boreR = pinR + boreGap
+  const mouthW = 1.6 * pinR
+  const armZ0 = axisZ + pinR + 0.4
+  const armZ1 = zBack + 1.5 // overlaps the panel over the back rim
+  for (let i = 1; i < knuckleCount; i += 2) {
+    const cx = -m.innerW / 2 + knuckleW * (i + 0.5)
+    const w = knuckleW - kGap
+    let k = cylinderX(barrelR, w, cx, axisY, axisZ)
+    k = csgAdd(k, box(w, axisY + 1 - outerH, armZ1 - armZ0, cx, (axisY + 1 + outerH) / 2, (armZ0 + armZ1) / 2))
+    k = csgSubtract(k, cylinderX(boreR, w + 1, cx, axisY, axisZ))
+    const slotTop = axisY - pinR * 0.5 // reaches into the bore, below centre → ~270° wrap
+    const slotBot = axisY - barrelR - 1
+    k = csgSubtract(k, box(w + 1, slotTop - slotBot, mouthW, cx, (slotTop + slotBot) / 2, axisZ))
+    lid = csgAdd(lid, k)
+  }
+
+  lid = weld(lid)
+  lid.computeBoundingBox()
+
   const sz = boxOuterSize(m)
   return { box: body, lid, size: { x: sz.x, y: sz.y, z: sz.z } }
 }
