@@ -596,8 +596,8 @@ function SkadisControls({
             onChange={(v) => patch({ openingDeg: v })} />
         </Field>
         <p className="hint">
-          0° = fully enclosed. Larger opens the chosen face by that angle — a clean arc on round
-          shapes, a V-notch on rectangular ones.
+          0° = fully enclosed. Larger snips that much out of the chosen wall — a clean arc on round
+          shapes, a V-notch on rectangular ones. The floor stays whole.
           {model.openingSide !== 'front' &&
             ` Side openings cap at ${openMax}° so the cut stays clear of the pegboard mount at the back.`}
         </p>

@@ -314,11 +314,15 @@ export function buildSkadis(m: SkadisModel): BuiltSkadis {
     }
   }
 
-  // 4) Partial enclosure: subtract a full-height wedge from one side ----------
+  // 4) Partial enclosure: snip a wedge out of the WALL on one side ------------
   // Pie slice with apex on the axis, bisected by the chosen side's azimuth,
   // spanning openingDeg. One uniform rule: a clean arc on round, a V-notch on
   // rectangular shapes — and the side is just where the bisector points, so a
   // left/right opening is the front wedge rotated a quarter turn.
+  //
+  // The cut starts at the cavity floor, so it takes the wall and leaves the
+  // floor (or the open-bottom rim shelf) whole: a slice through the floor as
+  // well would leave a holder with no bottom under its opening.
   if (m.openingDeg > 0) {
     const bisector = (OPENING_AZIMUTH[m.openingSide] * Math.PI) / 180
     const span = clamp(m.openingDeg, 0, maxOpeningDeg(m.openingSide))
@@ -335,11 +339,11 @@ export function buildSkadis(m: SkadisModel): BuiltSkadis {
     }
     wedge.closePath()
     const tool = new THREE.ExtrudeGeometry(wedge, {
-      depth: height + 2 * EPS,
+      depth: height - floorH + EPS, // floor top → just past the mouth
       bevelEnabled: false,
     })
     tool.rotateX(-Math.PI / 2)
-    tool.translate(0, -EPS, 0)
+    tool.translate(0, floorH, 0)
     geo = csgSubtract(geo, weld(tool))
   }
 

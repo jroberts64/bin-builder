@@ -23,10 +23,11 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
   print-in-place back hooks (40mm hole grid). Choose a **rectangular**
   (with an adjustable corner radius — 0 = sharp) or **round** cross-section, then:
   - **Taper** — narrow the base toward a full-size mouth (a tapered cup).
-  - **Opening** — open the **front**, **left** or **right** face by a chosen
-    angle (a clean arc on round shapes, a V-notch on rectangular ones). The
-    front goes up to 300°; a side opening is capped at 120° so the cut stays
-    clear of the pegboard mount at the back.
+  - **Opening** — snip the **front**, **left** or **right** wall away over a
+    chosen angle (a clean arc on round shapes, a V-notch on rectangular ones).
+    Only the wall is cut — the floor stays whole. The front goes up to 300°; a
+    side opening is capped at 120° so the cut stays clear of the pegboard mount
+    at the back.
   - **Open bottom** — drop the floor to a support-lip rim shelf of a set width.
   - **Hook style** — pick how the back hooks grip, from a light **friction peg**
     to a **snap** catch to a strong **wrap clip** (with an inline ℹ️ explaining
