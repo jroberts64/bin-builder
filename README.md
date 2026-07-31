@@ -45,6 +45,13 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     quantised by layer height) or **standing** (on its bottom edge — continuous
     tone and finer vertical detail, but a tall thin print that wants a brim).
     The preview always shows the chosen orientation.
+  - **Dithering** (flat only) — printed flat, brightness is the layer stack, so a
+    0.8–3mm range at 0.2mm layers is only 12 grey levels and smooth gradients
+    band into contour lines. Dithering quantises each sample to the nearest
+    printable layer and diffuses the rounding error into its neighbours
+    (Floyd–Steinberg, serpentine scan), so local averages still track the photo
+    — halftone printing applied to height. Tell it your slicer's layer height.
+    The preview looks grainy up close; backlit, it reads smooth.
   - Exports STL/3MF; the image persists with saves but is left out of share
     links (too big for a URL).
 - **Gridfinity toggle** — switch the Gridfinity foot, baseplate clearance and

@@ -828,9 +828,27 @@ function LithoControls({
         </div>
         <p className="hint">
           {flat
-            ? `Exported lying on its back with the relief up — already oriented, don’t rotate it in the slicer. Brightness is stacked in layers, so tone is quantised by layer height: ~${greys(model, 0.2)} greys at 0.2mm, ~${greys(model, 0.1)} at 0.1mm. Only ${Math.ceil(model.maxThickness / 0.2)} layers tall, so no brim and no overhangs — but smooth gradients can band.`
-            : `Exported standing on its bottom edge. The slicer varies wall width across the panel, so tone is continuous and vertical detail gets the layer height — but it’s ${Math.ceil(panelHeight(model) / 0.2)} layers of a thin upright part: use a brim.`}
+            ? `Exported lying on its back with the relief up — already oriented, don’t rotate it in the slicer. Only ${Math.ceil(model.maxThickness / model.layerHeight)} layers tall, so it prints fast with no brim and no overhangs.`
+            : `Exported standing on its bottom edge. The slicer varies wall width across the panel, so tone is continuous and vertical detail gets the layer height — but it’s ${Math.ceil(panelHeight(model) / model.layerHeight)} layers of a thin upright part: use a brim.`}
         </p>
+
+        {flat && (
+          <>
+            <Field label="Slicer layer height">
+              <NumberInput value={model.layerHeight} min={0.04} max={0.4} step={0.02} unit="mm"
+                onChange={(v) => patch({ layerHeight: v })} />
+            </Field>
+            <Toggle label="Dither (smooth gradients)" checked={model.dither}
+              onChange={(v) => patch({ dither: v })} />
+            <p className="hint">
+              Flat, brightness is the layer stack, so this range gives only{' '}
+              <b>{greys(model)} grey levels</b> at {model.layerHeight}mm layers.{' '}
+              {model.dither
+                ? 'Dithering picks the nearest printable level per sample and pushes the rounding error into its neighbours, so the local average still tracks the photo — halftone printing, applied to height. Set this to match your slicer. The preview looks grainy up close, which is the point: backlit, the eye averages the halftone into smooth tone instead of reading hard contour lines.'
+                : 'Without dithering, every gradient crossing a level boundary prints as a hard contour line. Turn it on unless you want the raw stepped relief.'}
+            </p>
+          </>
+        )}
       </Section>
 
       <Section title="Mounting" defaultOpen>
@@ -860,9 +878,15 @@ function LithoControls({
 }
 
 // Distinct grey levels a flat print can resolve: brightness is the stack height,
-// so the usable thickness range divided by layer height (inclusive of both ends).
-const greys = (m: LithoModel, layerH: number) =>
-  Math.floor((m.maxThickness - m.minThickness) / layerH) + 1
+// so it's the count of whole layer steps spanning the thickness range. Matches
+// ditherGrid's inward rounding of the range ends in litho.ts.
+const greys = (m: LithoModel) =>
+  Math.max(
+    1,
+    Math.floor(m.maxThickness / m.layerHeight + 1e-6) -
+      Math.ceil(m.minThickness / m.layerHeight - 1e-6) +
+      1,
+  )
 
 // ---------- shared presentational components ----------
 

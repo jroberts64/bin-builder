@@ -46,6 +46,8 @@ export interface LithoModel {
   mountHole: boolean // through-hole near the top edge for hanging
   mountHoleDiameter: number // mm
   orientation: LithoOrientation // how it's placed for preview + export
+  dither: boolean // flat only: quantise the relief to layer steps + error diffusion
+  layerHeight: number // mm, the slicer layer height dithering quantises to
 }
 
 export function defaultLitho(): LithoModel {
@@ -62,6 +64,8 @@ export function defaultLitho(): LithoModel {
     mountHole: false,
     mountHoleDiameter: 4,
     orientation: 'flat',
+    dither: true,
+    layerHeight: 0.2,
   }
 }
 
@@ -218,6 +222,71 @@ function thicknessSampler(m: LithoModel, panelW: number, panelH: number): (u: nu
   }
 }
 
+// --- dithering --------------------------------------------------------------
+
+// Printed FLAT, the relief height is the stack height, so tone is quantised by
+// layer height whatever we model: a 0.8–3mm range at 0.2mm layers is only 12
+// greys, and a smooth gradient crossing a level boundary prints as a hard contour
+// line (banding). Dithering fixes that the way newspapers print photographs: pick
+// the nearest printable level per cell, then push the rounding error into
+// neighbouring cells so the LOCAL AVERAGE still tracks the true height. Adjacent
+// cells alternate between the two bracketing levels and the eye (and the diffused
+// backlight) blends them into the in-between tone.
+//
+// Floyd–Steinberg weights over a serpentine (boustrophedon) scan — alternating
+// row direction keeps the error from marching in one direction and laying down
+// the diagonal streaks a raster-order scan produces.
+//
+// Returns a grid of quantised heights, indexed [j*nx + i], or null when there
+// aren't at least 2 printable levels to dither between.
+function ditherGrid(
+  nx: number,
+  ny: number,
+  raw: Float32Array,
+  layerHeight: number,
+  minT: number,
+  maxT: number,
+): Float32Array | null {
+  // Printable levels are whole layer counts. Round the ends INWARD so dithering
+  // never asks for a thinner floor than requested (a level below minT could thin
+  // the panel to nothing) or a taller peak than the panel.
+  const loLevel = Math.ceil(minT / layerHeight - 1e-6)
+  const hiLevel = Math.floor(maxT / layerHeight + 1e-6)
+  if (hiLevel - loLevel < 1) return null
+  const lo = loLevel * layerHeight
+  const hi = hiLevel * layerHeight
+
+  const out = new Float32Array(nx * ny)
+  // Diffuse into a copy so the source stays clean; errors accumulate here.
+  const buf = Float32Array.from(raw)
+  const add = (i: number, j: number, err: number, wt: number) => {
+    if (i < 0 || i >= nx || j < 0 || j >= ny) return // error off the edge is dropped
+    buf[j * nx + i] += err * wt
+  }
+
+  for (let j = 0; j < ny; j++) {
+    const leftToRight = j % 2 === 0
+    for (let s = 0; s < nx; s++) {
+      const i = leftToRight ? s : nx - 1 - s
+      const k = j * nx + i
+      // Clamp the carried value before quantising, so a run of clipped cells
+      // can't accumulate unbounded error and smear across the panel.
+      const want = clamp(buf[k], lo, hi)
+      const level = Math.round(want / layerHeight)
+      const got = clamp(level, loLevel, hiLevel) * layerHeight
+      out[k] = got
+      const err = want - got
+      // Forward neighbours, mirrored when scanning right-to-left.
+      const fwd = leftToRight ? 1 : -1
+      add(i + fwd, j, err, 7 / 16)
+      add(i - fwd, j + 1, err, 3 / 16)
+      add(i, j + 1, err, 5 / 16)
+      add(i + fwd, j + 1, err, 1 / 16)
+    }
+  }
+  return out
+}
+
 // --- heightmap mesh ---------------------------------------------------------
 
 // A closed heightmap slab over [x0,x0+w]×[y0,y0+h]: relief front at z=zAt(x,y),
@@ -226,6 +295,8 @@ function thicknessSampler(m: LithoModel, panelW: number, panelH: number): (u: nu
 // with the walls; back ring edges pair walls with a centre-fan back face (the
 // back only needs its boundary to match the walls, so its interior is one fan
 // vertex, halving the mesh vs mirroring the grid).
+// zAt receives the grid indices alongside the world position so a precomputed
+// grid (the dithered relief) can be looked up directly instead of re-derived.
 function heightfieldMesh(
   x0: number,
   y0: number,
@@ -233,7 +304,7 @@ function heightfieldMesh(
   h: number,
   nx: number,
   ny: number,
-  zAt: (x: number, y: number) => number,
+  zAt: (x: number, y: number, i: number, j: number) => number,
 ): THREE.BufferGeometry {
   const dx = w / (nx - 1)
   const dy = h / (ny - 1)
@@ -248,7 +319,7 @@ function heightfieldMesh(
       const k = (j * nx + i) * 3
       positions[k] = x
       positions[k + 1] = y
-      positions[k + 2] = zAt(x, y)
+      positions[k + 2] = zAt(x, y, i, j)
     }
   }
 
@@ -370,9 +441,25 @@ export function buildLitho(m: LithoModel): BuiltLitho {
   // box (the ideal circle dips ROUND_FLAT below y=0) so the crop stays centred
   // on the circle, not on the flattened visible part.
   const thick = thicknessSampler(m, m.width, round ? m.width : m.height)
-  const zAt = round
+  const zRaw = round
     ? (x: number, y: number) => thick((x + m.width / 2) / m.width, (y + ROUND_FLAT) / m.width)
     : (x: number, y: number) => thick((x + m.width / 2) / m.width, y / m.height)
+
+  // Dithering only makes sense FLAT, where the relief is the layer stack. Printed
+  // standing, thickness is drawn horizontally by varying wall width — there are no
+  // layer steps in the tone to dither away, and quantising would only throw
+  // resolution away. So the flag is deliberately a no-op when standing.
+  let zAt: (x: number, y: number, i: number, j: number) => number = (x, y) => zRaw(x, y)
+  if (m.dither && m.orientation === 'flat') {
+    const raw = new Float32Array(nx * ny)
+    const dx = gw / (nx - 1)
+    const dy = gh / (ny - 1)
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) raw[j * nx + i] = zRaw(gx0 + i * dx, gy0 + j * dy)
+    }
+    const dithered = ditherGrid(nx, ny, raw, m.layerHeight, m.minThickness, maxT)
+    if (dithered) zAt = (_x, _y, i, j) => dithered[j * nx + i]
+  }
 
   let geo = heightfieldMesh(gx0, gy0, gw, gh, nx, ny, zAt)
 

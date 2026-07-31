@@ -174,6 +174,8 @@ export function coerceLitho(raw: unknown): LithoModel {
     mountHole: bool(m.mountHole, d.mountHole),
     mountHoleDiameter: num(m.mountHoleDiameter, d.mountHoleDiameter, 2, 12),
     orientation: oneOf(m.orientation, LITHO_ORIENTATIONS, d.orientation),
+    dither: bool(m.dither, d.dither),
+    layerHeight: num(m.layerHeight, d.layerHeight, 0.04, 0.4),
   }
 }
 
