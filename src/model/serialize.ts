@@ -1,6 +1,13 @@
 import { BinModel, Divider, LipStyle, SocketStyle, defaultBin } from './types'
 import { BoxModel, defaultBox } from './box'
-import { SkadisModel, HolderShape, HookStyle, defaultSkadis } from './skadis'
+import {
+  SkadisModel,
+  HolderShape,
+  HookStyle,
+  OpeningSide,
+  defaultSkadis,
+  maxOpeningDeg,
+} from './skadis'
 import { LithoModel, LithoShape, LithoOrientation, defaultLitho } from './litho'
 
 // Versioned (de)serialization for a design. Everything that persists or shares —
@@ -107,6 +114,7 @@ export function coerceBox(raw: unknown): BoxModel {
 
 const HOLDER_SHAPES: HolderShape[] = ['rect', 'round']
 const HOOK_STYLES: HookStyle[] = ['peg', 'snap', 'clip']
+const OPENING_SIDES: OpeningSide[] = ['front', 'left', 'right']
 
 // Turn arbitrary parsed JSON into a guaranteed-valid SkadisModel.
 export function coerceSkadis(raw: unknown): SkadisModel {
@@ -115,6 +123,11 @@ export function coerceSkadis(raw: unknown): SkadisModel {
   // Legacy migration: the separate 'rounded' shape folded into 'rect' (which now
   // carries the corner radius; radius 0 = sharp). Preserve the saved radius.
   const rawShape = m.shape === ('rounded' as HolderShape) ? 'rect' : m.shape
+  // The angle a side opening may span depends on which side it's on (the wedge
+  // has to stay clear of the back plate), so resolve the side first and clamp
+  // the angle against it — a saved 300° front opening switched to a side lands
+  // at that side's maximum rather than eating the mount.
+  const openingSide = oneOf(m.openingSide, OPENING_SIDES, d.openingSide)
   return {
     shape: oneOf(rawShape, HOLDER_SHAPES, d.shape),
     width: num(m.width, d.width, 15, 300),
@@ -125,7 +138,8 @@ export function coerceSkadis(raw: unknown): SkadisModel {
     taper: num(m.taper, d.taper, 30, 100),
     bottom: oneOf(m.bottom, ['full', 'open'], d.bottom),
     supportLip: num(m.supportLip, d.supportLip, 0, 40),
-    openingDeg: num(m.openingDeg, d.openingDeg, 0, 300),
+    openingSide,
+    openingDeg: num(m.openingDeg, d.openingDeg, 0, maxOpeningDeg(openingSide)),
     hookStyle: oneOf(m.hookStyle, HOOK_STYLES, d.hookStyle),
     clearance: num(m.clearance, d.clearance, 0, 1),
   }

@@ -44,6 +44,26 @@ export type HolderShape = 'rect' | 'round'
 //            board on three sides. Strongest / most positive.
 export type HookStyle = 'peg' | 'snap' | 'clip'
 
+// Which face the opening wedge is cut into. The back (-Z) isn't an option: the
+// mount plate and hooks live there.
+export type OpeningSide = 'front' | 'left' | 'right'
+
+// Bisector azimuth of each side, in degrees from +Z (front) toward +X (right) —
+// the same convention the wedge is swept in (see buildSkadis step 4).
+const OPENING_AZIMUTH: Record<OpeningSide, number> = { front: 0, right: 90, left: -90 }
+
+// The wedge must never reach the back: that's where the plate embeds into the
+// container and the hooks hang off it, and cutting the back wall away leaves the
+// mount bridging two stubs (or floating free). So every opening keeps at least
+// BACK_GUARD_DEG of container either side of the back bisector — which, for a
+// wedge centred on its side, caps how wide it can get. Front (azimuth 0) keeps
+// the historical 300°; a side opening (azimuth ±90) gets 120°, enough to take
+// out a whole wall on a square footprint.
+const BACK_GUARD_DEG = 30
+export function maxOpeningDeg(side: OpeningSide): number {
+  return 2 * (180 - BACK_GUARD_DEG - Math.abs(OPENING_AZIMUTH[side]))
+}
+
 export interface SkadisModel {
   shape: HolderShape
   width: number // mm, X outer (diameter for round; W≠D → ellipse)
@@ -54,7 +74,8 @@ export interface SkadisModel {
   taper: number // base size as % of the mouth (100 = straight; 70 = base 70%)
   bottom: 'full' | 'open'
   supportLip: number // mm, inward rim shelf width when bottom = 'open'
-  openingDeg: number // front opening angle in degrees (0 = fully enclosed)
+  openingSide: OpeningSide // which face the opening is cut into
+  openingDeg: number // opening angle in degrees (0 = fully enclosed)
   hookStyle: HookStyle // how the back hooks grip the pegboard
   clearance: number // mm, Skadis hook fit
 }
@@ -70,6 +91,7 @@ export function defaultSkadis(): SkadisModel {
     taper: 100,
     bottom: 'full',
     supportLip: 4,
+    openingSide: 'front',
     openingDeg: 0,
     hookStyle: 'clip',
     clearance: 0.4,
@@ -292,11 +314,15 @@ export function buildSkadis(m: SkadisModel): BuiltSkadis {
     }
   }
 
-  // 4) Partial enclosure: subtract a full-height wedge from the front ---------
-  // Pie slice with apex on the axis, bisected by +Z, spanning openingDeg. One
-  // uniform rule: a clean arc on round, a V-notch on rectangular shapes.
+  // 4) Partial enclosure: subtract a full-height wedge from one side ----------
+  // Pie slice with apex on the axis, bisected by the chosen side's azimuth,
+  // spanning openingDeg. One uniform rule: a clean arc on round, a V-notch on
+  // rectangular shapes — and the side is just where the bisector points, so a
+  // left/right opening is the front wedge rotated a quarter turn.
   if (m.openingDeg > 0) {
-    const half = (clamp(m.openingDeg, 0, 300) * Math.PI) / 360 // half-angle, radians
+    const bisector = (OPENING_AZIMUTH[m.openingSide] * Math.PI) / 180
+    const span = clamp(m.openingDeg, 0, maxOpeningDeg(m.openingSide))
+    const half = (span * Math.PI) / 360 // half-angle, radians
     const R = Math.max(width, depth) * 1.5 // beyond the container at any scale
     const wedge = new THREE.Shape()
     // Shape local X→world X, local Y→world -Z (see taperedExtrude). Front (+Z) is
@@ -304,7 +330,7 @@ export function buildSkadis(m: SkadisModel): BuiltSkadis {
     wedge.moveTo(0, 0)
     const steps = Math.max(2, Math.ceil((half * 2) / (Math.PI / 36))) // ~5° arc
     for (let i = 0; i <= steps; i++) {
-      const phi = -half + (2 * half * i) / steps
+      const phi = bisector - half + (2 * half * i) / steps
       wedge.lineTo(R * Math.sin(phi), -R * Math.cos(phi)) // (worldX, localY=-worldZ)
     }
     wedge.closePath()

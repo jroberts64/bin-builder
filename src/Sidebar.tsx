@@ -7,7 +7,7 @@ import {
   resolvedSize,
 } from './model/types'
 import { BoxModel } from './model/box'
-import { SkadisModel, HolderShape, HookStyle } from './model/skadis'
+import { SkadisModel, HolderShape, HookStyle, OpeningSide, maxOpeningDeg } from './model/skadis'
 import { LithoModel, LithoShape, imageFileToDataURL, prepareLithoImage } from './model/litho'
 import { panelHeight } from './model/litho'
 import { Design, ObjectType, assertNever, toJSON } from './model/serialize'
@@ -514,6 +514,14 @@ function SkadisControls({
     { id: 'snap', label: 'Snap' },
     { id: 'clip', label: 'Clip' },
   ]
+  // Ordered as seen looking at the holder from the front (the back is the
+  // pegboard side, so it can't open).
+  const sides: { id: OpeningSide; label: string }[] = [
+    { id: 'left', label: 'Left' },
+    { id: 'front', label: 'Front' },
+    { id: 'right', label: 'Right' },
+  ]
+  const openMax = maxOpeningDeg(model.openingSide)
   const open = model.bottom === 'open'
 
   return (
@@ -568,13 +576,30 @@ function SkadisControls({
       </Section>
 
       <Section title="Opening" defaultOpen>
-        <Field label="Front opening">
-          <NumberInput value={model.openingDeg} min={0} max={300} step={5} unit="°"
+        <div className="seg">
+          {sides.map((s) => (
+            <button
+              key={s.id}
+              className={model.openingSide === s.id ? 'active' : ''}
+              // Side openings allow a smaller angle than the front, so trim the
+              // current angle to fit rather than letting it silently clamp.
+              onClick={() =>
+                patch({ openingSide: s.id, openingDeg: Math.min(model.openingDeg, maxOpeningDeg(s.id)) })
+              }
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <Field label="Opening angle">
+          <NumberInput value={model.openingDeg} min={0} max={openMax} step={5} unit="°"
             onChange={(v) => patch({ openingDeg: v })} />
         </Field>
         <p className="hint">
-          0° = fully enclosed. Larger opens the front by that angle — a clean arc on round shapes, a
-          V-notch on rectangular ones.
+          0° = fully enclosed. Larger opens the chosen face by that angle — a clean arc on round
+          shapes, a V-notch on rectangular ones.
+          {model.openingSide !== 'front' &&
+            ` Side openings cap at ${openMax}° so the cut stays clear of the pegboard mount at the back.`}
         </p>
       </Section>
 
