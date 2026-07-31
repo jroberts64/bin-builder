@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildBin } from './model/geometry'
 import { buildBox } from './model/box'
 import { buildSkadis } from './model/skadis'
-import { buildLitho, prepareLithoImage } from './model/litho'
+import { buildLitho, orientLithoForPreview, prepareLithoImage } from './model/litho'
 import { Design, assertNever } from './model/serialize'
 
 interface Props {
@@ -127,9 +127,13 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
           case 'skadis':
             group.add(new THREE.Mesh(buildSkadis(design.skadis).geometry, mat(0x4a9eff)))
             break
-          case 'litho':
-            group.add(new THREE.Mesh(buildLitho(design.litho).geometry, mat(0x4a9eff)))
+          case 'litho': {
+            // Preview in the chosen print orientation, so what you see is what
+            // the exported file already is.
+            const litho = buildLitho(design.litho).geometry
+            group.add(new THREE.Mesh(orientLithoForPreview(litho, design.litho), mat(0x4a9eff)))
             break
+          }
           default:
             assertNever(design.type)
         }

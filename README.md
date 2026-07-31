@@ -37,8 +37,12 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
   - **Relief range** — min/max thickness (0.8–3mm classic) and a detail
     (sample size) control.
   - **Hanging hole** — optional through-hole near the top edge.
-  - Previews (and exports) standing up, the recommended print orientation.
-    Exports STL/3MF; the image persists with saves but is left out of share
+  - **Print orientation** — **flat** (default: on its back, relief up, already
+    oriented so you don't rotate it in the slicer — fast, no brim, tone
+    quantised by layer height) or **standing** (on its bottom edge — continuous
+    tone and finer vertical detail, but a tall thin print that wants a brim).
+    The preview always shows the chosen orientation.
+  - Exports STL/3MF; the image persists with saves but is left out of share
     links (too big for a URL).
 - **Gridfinity toggle** — switch the Gridfinity foot, baseplate clearance and
   magnet/screw sockets on or off. Off = a plain flat-bottomed tray. Independent

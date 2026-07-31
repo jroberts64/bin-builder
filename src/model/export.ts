@@ -63,8 +63,14 @@ export function exportSkadisSTEP(model: SkadisModel): Blob {
 // --- Lithophane: one fused mesh, like the bin. No STEP export — a faceted
 // B-rep of a 200k-triangle relief would be enormous and useless in CAD. -------
 
+// Print space is Z-up. A STANDING panel needs the usual Y-up -> Z-up flip. A FLAT
+// one needs no rotation at all: the model already has its flat back on z=0 with
+// the relief rising toward +Z, which is exactly back-on-the-bed, relief-up. So the
+// exported file is already oriented — no rotating by hand in the slicer (and no
+// risk of rotating the wrong way and landing the image face-down on supports).
 function lithoExportGeometry(model: LithoModel): THREE.BufferGeometry {
-  return toZUp(buildLitho(model).geometry)
+  const geom = buildLitho(model).geometry
+  return model.orientation === 'flat' ? geom : toZUp(geom)
 }
 
 export function exportLithoSTL(model: LithoModel): Blob {

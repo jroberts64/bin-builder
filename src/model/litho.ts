@@ -19,6 +19,20 @@ import { csgIntersect, csgSubtract, weld } from './csg'
 
 export type LithoShape = 'rect' | 'round'
 
+// How the panel is placed for printing. This is a real design decision, not just
+// a slicer convenience — it swaps which printer axis carries tone and which
+// carries detail:
+//   'flat'     — panel on its back, relief up. Tone is built up in layers, so it
+//                is quantised by layer height (~12 greys over a 0.8–3mm range at
+//                0.2mm layers, ~23 at 0.1mm); detail in the picture plane is
+//                limited by extrusion width. Fast, no brim, no overhangs; smooth
+//                gradients can band.
+//   'standing' — panel on its bottom edge. The slicer varies wall width across
+//                the 0.8–3mm wall, so tone is effectively continuous and vertical
+//                detail gets the layer height — but it is a tall thin print
+//                (~1000 layers for a 200mm panel) that wants a brim.
+export type LithoOrientation = 'flat' | 'standing'
+
 export interface LithoModel {
   shape: LithoShape
   image: string | null // source image as a data URL (persisted, but never in share links)
@@ -31,6 +45,7 @@ export interface LithoModel {
   invert: boolean // flip light/dark (e.g. for a negative)
   mountHole: boolean // through-hole near the top edge for hanging
   mountHoleDiameter: number // mm
+  orientation: LithoOrientation // how it's placed for preview + export
 }
 
 export function defaultLitho(): LithoModel {
@@ -46,6 +61,7 @@ export function defaultLitho(): LithoModel {
     invert: false,
     mountHole: false,
     mountHoleDiameter: 4,
+    orientation: 'flat',
   }
 }
 
@@ -69,9 +85,31 @@ const clamp01 = (v: number) => clamp(v, 0, 1)
 
 // The visible panel height: rect panels are as tall as set; round panels lose
 // the bottom chord flat.
+export function panelHeight(m: LithoModel): number {
+  return m.shape === 'round' ? m.width - ROUND_FLAT : m.height
+}
+
+// Outer size in the VIEWPORT's axes (Y up), so the dims readout matches how the
+// preview is placed: standing puts the image height up, flat puts the thickness up.
 export function lithoOuterSize(m: LithoModel): { x: number; y: number; z: number } {
-  const h = m.shape === 'round' ? m.width - ROUND_FLAT : m.height
-  return { x: m.width, y: h, z: effMaxThickness(m) }
+  const h = panelHeight(m)
+  const t = effMaxThickness(m)
+  return m.orientation === 'flat' ? { x: m.width, y: t, z: h } : { x: m.width, y: h, z: t }
+}
+
+// The panel is always MODELLED standing (Y = image height, Z = thickness) because
+// that matches the viewport's Y-up-on-Y=0 convention. Placing it for preview is
+// therefore a no-op when standing, and a lie-down when flat. Mutates in place —
+// callers pass a freshly built geometry.
+export function orientLithoForPreview(
+  geom: THREE.BufferGeometry,
+  m: LithoModel,
+): THREE.BufferGeometry {
+  if (m.orientation === 'standing') return geom
+  geom.rotateX(-Math.PI / 2) // height +Y -> depth -Z, thickness +Z -> up +Y
+  geom.translate(0, 0, panelHeight(m) / 2) // centre the footprint on the plate
+  geom.computeBoundingBox()
+  return geom
 }
 
 function effMaxThickness(m: LithoModel): number {

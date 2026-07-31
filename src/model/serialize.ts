@@ -1,7 +1,7 @@
 import { BinModel, Divider, LipStyle, SocketStyle, defaultBin } from './types'
 import { BoxModel, defaultBox } from './box'
 import { SkadisModel, HolderShape, HookStyle, defaultSkadis } from './skadis'
-import { LithoModel, LithoShape, defaultLitho } from './litho'
+import { LithoModel, LithoShape, LithoOrientation, defaultLitho } from './litho'
 
 // Versioned (de)serialization for a design. Everything that persists or shares —
 // localStorage, .json files, share URLs — goes through here so there is exactly
@@ -132,6 +132,7 @@ export function coerceSkadis(raw: unknown): SkadisModel {
 }
 
 const LITHO_SHAPES: LithoShape[] = ['rect', 'round']
+const LITHO_ORIENTATIONS: LithoOrientation[] = ['flat', 'standing']
 
 // The litho image is a data URL. Cap the size so a hostile payload can't bloat
 // localStorage through the coerce path; anything unrecognisable → no image.
@@ -158,6 +159,7 @@ export function coerceLitho(raw: unknown): LithoModel {
     invert: bool(m.invert, d.invert),
     mountHole: bool(m.mountHole, d.mountHole),
     mountHoleDiameter: num(m.mountHoleDiameter, d.mountHoleDiameter, 2, 12),
+    orientation: oneOf(m.orientation, LITHO_ORIENTATIONS, d.orientation),
   }
 }
 

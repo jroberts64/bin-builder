@@ -9,6 +9,7 @@ import {
 import { BoxModel } from './model/box'
 import { SkadisModel, HolderShape, HookStyle } from './model/skadis'
 import { LithoModel, LithoShape, imageFileToDataURL, prepareLithoImage } from './model/litho'
+import { panelHeight } from './model/litho'
 import { Design, ObjectType, assertNever, toJSON } from './model/serialize'
 import {
   export3MF,
@@ -674,6 +675,7 @@ function LithoControls({
     inches ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`
 
   const round = model.shape === 'round'
+  const flat = model.orientation === 'flat'
   const shapes: { id: LithoShape; label: string }[] = [
     { id: 'rect', label: 'Rectangle' },
     { id: 'round', label: 'Round' },
@@ -763,7 +765,7 @@ function LithoControls({
           </p>
         )}
         <Measurements
-          size={{ x: model.width, y: round ? model.width : model.height, z: model.maxThickness }}
+          size={{ x: model.width, y: panelHeight(model), z: model.maxThickness }}
           fmtLen={fmtLen} inches={inches} setInches={setInches}
         />
       </Section>
@@ -787,6 +789,25 @@ function LithoControls({
         </p>
       </Section>
 
+      <Section title="Print orientation" defaultOpen>
+        <div className="seg">
+          <button className={flat ? 'active' : ''} onClick={() => patch({ orientation: 'flat' })}>
+            Flat
+          </button>
+          <button
+            className={!flat ? 'active' : ''}
+            onClick={() => patch({ orientation: 'standing' })}
+          >
+            Standing
+          </button>
+        </div>
+        <p className="hint">
+          {flat
+            ? `Exported lying on its back with the relief up — already oriented, don’t rotate it in the slicer. Brightness is stacked in layers, so tone is quantised by layer height: ~${greys(model, 0.2)} greys at 0.2mm, ~${greys(model, 0.1)} at 0.1mm. Only ${Math.ceil(model.maxThickness / 0.2)} layers tall, so no brim and no overhangs — but smooth gradients can band.`
+            : `Exported standing on its bottom edge. The slicer varies wall width across the panel, so tone is continuous and vertical detail gets the layer height — but it’s ${Math.ceil(panelHeight(model) / 0.2)} layers of a thin upright part: use a brim.`}
+        </p>
+      </Section>
+
       <Section title="Mounting" defaultOpen>
         <Toggle label="Hanging hole" checked={model.mountHole}
           onChange={(v) => patch({ mountHole: v })} />
@@ -806,13 +827,17 @@ function LithoControls({
       <Section title="General" defaultOpen>
         <Toggle label="Show Build Plate" checked={showBuildPlate} onChange={setShowBuildPlate} />
         <p className="hint">
-          Prints standing up (as previewed) so the layer lines run across the image — the standard
-          lithophane orientation. Use a brim for bed adhesion.
+          The preview shows the print orientation chosen above, and the exported file matches it.
         </p>
       </Section>
     </>
   )
 }
+
+// Distinct grey levels a flat print can resolve: brightness is the stack height,
+// so the usable thickness range divided by layer height (inclusive of both ends).
+const greys = (m: LithoModel, layerH: number) =>
+  Math.floor((m.maxThickness - m.minThickness) / layerH) + 1
 
 // ---------- shared presentational components ----------
 
