@@ -19,6 +19,12 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     (box + lid joined, no supports, hinge axis along the bed) and folds closed
     with an overlapping lip + snap bead. Exports as one combined object.
     Hinge/knuckle clearances follow FDM best practice (~0.25mm pin gap).
+  - **Surface texture** — ridges, knurl, hex or dots on the **lid top** and on
+    the **outer walls**, each with its own pattern, depth and spacing, raised or
+    recessed. The print rules are built in: a hinged lid's top prints against the
+    plate, so it is recessed only, in whole layers, with at least half the face
+    left flat and a solid border so it still sticks; walls stay clear of the
+    lid's lip and the hinge; the sliding lid prints face-up and takes either.
 - **Skadis holders** — containers that clip onto an IKEA SKÅDIS pegboard via
   print-in-place back hooks (40mm hole grid). Choose a **rectangular**
   (with an adjustable corner radius — 0 = sharp) or **round** cross-section, then:
@@ -159,6 +165,7 @@ For a second project in the same AWS account, deploy `github-oidc.yaml` with
 | `src/model/types.ts` | `BinModel` data model, Gridfinity constants, size resolution |
 | `src/model/geometry.ts` | Builds the bin mesh via CSG: rounded body + chamfered feet, hollowed cavity, dividers, scoops, label tabs, bored magnet/screw holes, lip |
 | `src/model/box.ts` | `BoxModel` + `buildBox`: sliding-lid and print-in-place hinged-lid boxes (two meshes) |
+| `src/model/texture.ts` | Box surface textures (lid top + walls): pattern solids, print-rule constants, one boolean per face |
 | `src/model/skadis.ts` | `SkadisModel` + `buildSkadis`: pegboard holder — tapered rect/round container, front/side opening, open bottom, back hooks (one mesh) |
 | `src/model/csg.ts` | Manifold (WASM) add/subtract wrappers, async `initCSG()`, THREE↔Manifold conversion, vertex-weld helper |
 | `src/model/export.ts` | STL exporter + dependency-free 3MF (ZIP/OPC) and faceted-STEP writers |

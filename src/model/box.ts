@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { csgAdd, csgSubtract, weld } from './csg'
+import { BoxTexture, FaceRegion, applyTextures, defaultBoxTexture, faceRegion } from './texture'
 
 // Sliding-lid box: a closed box whose lid slides into grooves cut along the top
 // inner edges of the left/right walls. The back wall is closed (stops the lid);
@@ -40,6 +41,7 @@ export interface BoxModel {
   wall: number // mm, box wall + floor thickness
   lidThickness: number // mm, thickness of the lid panel
   clearance: number // mm, gap per side for moving fits (slide groove or hinge pin)
+  texture: BoxTexture // lid-top and outer-wall surface textures (see texture.ts)
 }
 
 export function defaultBox(): BoxModel {
@@ -52,6 +54,7 @@ export function defaultBox(): BoxModel {
     wall: 3, // thicker default: 2mm side walls flex and let the lid pop out
     lidThickness: 2.4,
     clearance: 0.2,
+    texture: defaultBoxTexture(),
   }
 }
 
@@ -90,6 +93,26 @@ function cylinderX(
 }
 
 // Outer dimensions of the assembled (closed) box, for the dims readout / camera.
+// Texture regions for the four outer walls of a body centred on X/Z with its
+// floor on Y=0. `tops` is the highest Y each wall's texture may reach (null =
+// leave that wall plain); faceRegion() insets every edge by TEXTURE.BORDER.
+// Each frame's u runs along the wall (so ridges at angle 0 are horizontal), v
+// is up, and u × v is the wall's outward normal.
+function wallRegions(
+  outerW: number,
+  outerD: number,
+  tops: { left: number | null; right: number | null; front: number | null; back: number | null },
+): (FaceRegion | null)[] {
+  const hw = outerW / 2
+  const hd = outerD / 2
+  return [
+    tops.left === null ? null : faceRegion([-hw, 0, -hd], [0, 0, 1], [0, 1, 0], outerD, tops.left),
+    tops.right === null ? null : faceRegion([hw, 0, hd], [0, 0, -1], [0, 1, 0], outerD, tops.right),
+    tops.front === null ? null : faceRegion([-hw, 0, hd], [1, 0, 0], [0, 1, 0], outerW, tops.front),
+    tops.back === null ? null : faceRegion([hw, 0, -hd], [-1, 0, 0], [0, 1, 0], outerW, tops.back),
+  ]
+}
+
 export function boxOuterSize(m: BoxModel): { x: number; y: number; z: number } {
   if (m.topType === 'hinged') {
     // Closed: cavity + floor + lid on top; lip overlaps the outside of the walls.
@@ -228,6 +251,16 @@ function buildSlidingBox(m: BoxModel): BuiltBox {
   }
 
   body = weld(body)
+
+  // Outer-wall texture. The side walls stop at the groove ledge: above it the
+  // dovetail channel leaves only wall − td (~1.2mm) of outer wall, which a
+  // recess would breach. The front stops there too (the mouth is open above).
+  // The back wall is solid full height (the channel starts at its inner face).
+  body = applyTextures(
+    body,
+    wallRegions(outerW, outerD, { left: grooveBottom, right: grooveBottom, front: grooveBottom, back: outerH }),
+    m.texture.sides, 'wall', wall, m.texture.layerHeight,
+  )
   body.computeBoundingBox()
 
   // --- Lid: panel + chamfered tongues, slides into the dovetail channel ------
@@ -263,6 +296,16 @@ function buildSlidingBox(m: BoxModel): BuiltBox {
   }
 
   lid = weld(lid)
+
+  // Lid-top texture: the flat between the tongue chamfers (|x| < ii), from the
+  // back-wall face to the front edge (the pull is beyond zFront). The lid
+  // exports on its bottom, so this face prints UP — raised or recessed. u = +X
+  // so ridges at angle 0 run side to side; u × v = +Y, the outward normal.
+  lid = applyTextures(
+    lid,
+    [faceRegion([-ii, grooveTop - c, zFront], [1, 0, 0], [0, 0, -1], 2 * ii, m.innerD + wall)],
+    m.texture.top, 'top-up', lidT, m.texture.layerHeight,
+  )
   lid.computeBoundingBox()
 
   return {
@@ -469,12 +512,34 @@ function buildHingedBox(m: BoxModel): BuiltBox {
   lid = csgAdd(lid, cylinderX(beadR, lidPanelW * 0.5, 0, lipH * 0.7, beadZ))
 
   lid = weld(lid)
+
+  // Lid-top texture. The panel's PLATE face (y = 0) is the lid's outer top
+  // once folded closed, so it is a 'bed-face': recessed only, whole layers.
+  // Panel section only — from the front edge to the start of the living hinge
+  // (BORDER short of it, via faceRegion) — never the band or the riser. u = +X,
+  // v = +Z so u × v = −Y, the outward (downward) normal of this face.
+  const panelFrontZ = lidHingeEdgeZ - slabD
+  lid = applyTextures(
+    lid,
+    [faceRegion([-lidPanelW / 2, 0, panelFrontZ], [1, 0, 0], [0, 0, 1], lidPanelW, panelD)],
+    m.texture.top, 'bed-face', lidT, m.texture.layerHeight,
+  )
   lid.computeBoundingBox()
 
   // Matching snap ridge on the box front exterior.
   const frontRidge = cylinderX(beadR, m.innerW * 0.5, 0, outerH - beadR, zFront - EPS)
   body = csgAdd(body, frontRidge)
   body = weld(body)
+
+  // Outer-wall texture, kept below the band the closed lid's lip wraps (the top
+  // lipH of the walls, with BORDER to spare) so a raised pattern can't collide
+  // with the lid closing. Back wall plain: the knuckle webs are there and the
+  // riser folds up against it.
+  body = applyTextures(
+    body,
+    wallRegions(outerW, outerD, { left: outerH - lipH, right: outerH - lipH, front: outerH - lipH, back: null }),
+    m.texture.sides, 'wall', wall, m.texture.layerHeight,
+  )
   body.computeBoundingBox()
 
   // Overall closed size for the readout.
@@ -589,6 +654,14 @@ function buildTopHingedBox(m: BoxModel): BuiltBox {
   body = csgSubtract(body, cylinderX(beadR + 0.15, m.innerW * 0.5 + 2, 0, grooveY, zFront))
 
   body = weld(body)
+
+  // Outer-wall texture, below the lip band (see the fold-flat builder). Back
+  // wall plain: boss columns, gussets and the panel's back-edge swing are there.
+  body = applyTextures(
+    body,
+    wallRegions(outerW, outerD, { left: outerH - lipH, right: outerH - lipH, front: outerH - lipH, back: null }),
+    m.texture.sides, 'wall', wall, m.texture.layerHeight,
+  )
   body.computeBoundingBox()
 
   // --- Lid (modelled closed: panel on the rim, lip wrapping the walls) ------
@@ -631,6 +704,15 @@ function buildTopHingedBox(m: BoxModel): BuiltBox {
   }
 
   lid = weld(lid)
+
+  // Lid-top texture. Modelled closed (face up) but exported top-side down, so
+  // a 'bed-face': recessed only, whole layers. The BORDER inset from the back
+  // edge also clears the knuckle arms, which rise above the panel to armZ1.
+  lid = applyTextures(
+    lid,
+    [faceRegion([-lidPanelW / 2, outerH + lidT, zBack + panelD], [1, 0, 0], [0, 0, -1], lidPanelW, panelD)],
+    m.texture.top, 'bed-face', lidT, m.texture.layerHeight,
+  )
   lid.computeBoundingBox()
 
   const sz = boxOuterSize(m)

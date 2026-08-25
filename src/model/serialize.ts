@@ -1,6 +1,14 @@
 import { BinModel, Divider, LipStyle, SocketStyle, defaultBin } from './types'
 import { BoxModel, defaultBox } from './box'
 import {
+  BoxTexture,
+  TextureSpec,
+  TEXTURE,
+  TEXTURE_MODES,
+  TEXTURE_PATTERNS,
+  minPitch,
+} from './texture'
+import {
   SkadisModel,
   HolderShape,
   HookStyle,
@@ -96,7 +104,32 @@ function coerceDividers(value: unknown): Divider[] {
   return out
 }
 
-// Turn arbitrary parsed JSON into a guaranteed-valid BoxModel.
+// One texture spec. Pitch is clamped against the chosen pattern's own minimum
+// (knurl needs 4mm where the others take 3), the same rule the builder and the
+// Sidebar apply, so a hand-edited file can't ask for sub-MIN_FEATURE bars.
+function coerceTextureSpec(raw: unknown, d: TextureSpec): TextureSpec {
+  const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<TextureSpec>
+  const pattern = oneOf(m.pattern, TEXTURE_PATTERNS, d.pattern)
+  return {
+    pattern,
+    mode: oneOf(m.mode, TEXTURE_MODES, d.mode),
+    depth: num(m.depth, d.depth, TEXTURE.MIN_DEPTH, TEXTURE.MAX_TOP_EMBOSS),
+    pitch: num(m.pitch, d.pitch, minPitch(pattern), TEXTURE.MAX_PITCH),
+    angle: m.angle === 90 ? 90 : 0,
+  }
+}
+
+function coerceBoxTexture(raw: unknown, d: BoxTexture): BoxTexture {
+  const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<BoxTexture>
+  return {
+    top: coerceTextureSpec(m.top, d.top),
+    sides: coerceTextureSpec(m.sides, d.sides),
+    layerHeight: num(m.layerHeight, d.layerHeight, 0.04, 0.4),
+  }
+}
+
+// Turn arbitrary parsed JSON into a guaranteed-valid BoxModel. A save that
+// predates textures has no `texture` and gets the defaults (pattern 'none').
 export function coerceBox(raw: unknown): BoxModel {
   const d = defaultBox()
   const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<BoxModel>
@@ -109,6 +142,7 @@ export function coerceBox(raw: unknown): BoxModel {
     wall: num(m.wall, d.wall, 1, 6),
     lidThickness: num(m.lidThickness, d.lidThickness, 1, 6),
     clearance: num(m.clearance, d.clearance, 0, 1),
+    texture: coerceBoxTexture(m.texture, d.texture),
   }
 }
 

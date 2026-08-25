@@ -7,6 +7,19 @@ import {
   resolvedSize,
 } from './model/types'
 import { BoxModel } from './model/box'
+import {
+  BoxTexture,
+  ResolvedTexture,
+  TextureContext,
+  TextureMode,
+  TextureSpec,
+  TEXTURE,
+  TEXTURE_PATTERNS,
+  PATTERNS,
+  minPitch,
+  resolveTexture,
+  textureDepthLimit,
+} from './model/texture'
 import { SkadisModel, HolderShape, HookStyle, OpeningSide, maxOpeningDeg } from './model/skadis'
 import { LithoModel, LithoShape, imageFileToDataURL, prepareLithoImage } from './model/litho'
 import { panelHeight } from './model/litho'
@@ -405,6 +418,14 @@ function BoxControls({
 
   const hinged = model.topType === 'hinged'
 
+  // Textures: the lid top and the outer walls are independent specs. Which
+  // rules apply to the lid depends on how it prints — the sliding lid face-up,
+  // both hinged lids with the top against the plate (see texture.ts).
+  const tex = model.texture
+  const patchTex = (p: Partial<BoxTexture>) => patch({ texture: { ...tex, ...p } })
+  const lidCtx: TextureContext = hinged ? 'bed-face' : 'top-up'
+  const lidTex = resolveTexture(tex.top, lidCtx, model.lidThickness, tex.layerHeight)
+
   return (
     <>
       <Section title="Top type" defaultOpen>
@@ -483,8 +504,146 @@ function BoxControls({
             : 'Smaller clearance = tighter slide. 0.2mm is a good starting point; increase if the lid binds.'}
         </p>
       </Section>
+
+      <Section title="Lid texture" defaultOpen>
+        <TextureControls
+          spec={tex.top} onChange={(s) => patchTex({ top: s })}
+          ctx={lidCtx} thickness={model.lidThickness} layerHeight={tex.layerHeight}
+          ridgeLabels={['Side to side', 'Front to back']}
+        />
+        {tex.top.pattern !== 'none' && (
+          <Field label="Slicer layer height">
+            <NumberInput value={tex.layerHeight} min={0.04} max={0.4} step={0.02} unit="mm"
+              onChange={(v) => patchTex({ layerHeight: v })} />
+          </Field>
+        )}
+        <p className="hint">
+          {lidCtx === 'top-up'
+            ? `The sliding lid prints face-up, so the texture can be raised or recessed; heights snap to whole layers because the relief is the layer stack.${
+                lidTex && lidTex.mode === 'emboss'
+                  ? ` A raised pattern stands ${fmtNum(Math.max(0, lidTex.depth - model.clearance))} mm above the box rim.`
+                  : ''
+              }`
+            : `${model.hingeStyle === 'top'
+                ? 'The snap-on lid prints top-side down, so its top is the face on the build plate.'
+                : 'The fold-flat lid prints face-down — this face becomes the top once folded closed.'} The texture is cut in as recesses the first layers skip and the layer above bridges: whole layers, no recess wider than ${TEXTURE.MAX_SPAN} mm, a ${TEXTURE.BORDER} mm solid border, and at least ${Math.round(TEXTURE.MIN_PLATEAU * 100)}% of the face left on the plate so it still sticks.${
+                model.hingeStyle === 'top'
+                  ? ''
+                  : ' In the preview it is on the underside: hide the build plate and orbit below to see it.'
+              }`}
+        </p>
+      </Section>
+
+      <Section title="Side texture" defaultOpen>
+        <TextureControls
+          spec={tex.sides} onChange={(s) => patchTex({ sides: s })}
+          ctx="wall" thickness={model.wall} layerHeight={tex.layerHeight}
+          ridgeLabels={['Horizontal', 'Vertical']}
+        />
+        <p className="hint">
+          {`Walls print vertical, so any pattern works raised or recessed (up to ${TEXTURE.MAX_WALL_DEPTH} mm). Kept ${TEXTURE.BORDER} mm from every edge${
+            hinged
+              ? ', below the band the lid’s lip wraps, and off the back wall where the hinge lives.'
+              : ' and below the lid groove, where the channel leaves the outer wall thin.'
+          }`}
+        </p>
+      </Section>
     </>
   )
+}
+
+// One texture spec: pattern / relief / depth / pitch / direction. The face's
+// print context decides what is allowed, and the effective values in the hint
+// come from the same resolveTexture() the builder uses, so they never disagree
+// with the geometry.
+function TextureControls({ spec, onChange, ctx, thickness, layerHeight, ridgeLabels }: {
+  spec: TextureSpec
+  onChange: (s: TextureSpec) => void
+  ctx: TextureContext
+  thickness: number
+  layerHeight: number
+  ridgeLabels: [string, string]
+}) {
+  const patch = (p: Partial<TextureSpec>) => onChange({ ...spec, ...p })
+  const bedFace = ctx === 'bed-face'
+  const mode: TextureMode = bedFace ? 'deboss' : spec.mode
+  const snaps = ctx !== 'wall' // horizontal faces: depth in whole layers
+  const maxDepth = textureDepthLimit(ctx, mode, thickness)
+  const minDepth = snaps ? layerHeight : TEXTURE.MIN_DEPTH
+  const active = spec.pattern !== 'none'
+  const resolved = resolveTexture(spec, ctx, thickness, layerHeight)
+
+  return (
+    <>
+      <div className="seg">
+        {TEXTURE_PATTERNS.map((p) => (
+          <button
+            key={p}
+            className={spec.pattern === p ? 'active' : ''}
+            onClick={() => patch({ pattern: p, pitch: Math.max(spec.pitch, minPitch(p)) })}
+          >
+            {p === 'none' ? 'None' : PATTERNS[p].label}
+          </button>
+        ))}
+      </div>
+      {active && maxDepth < minDepth - 1e-9 && (
+        <p className="hint">
+          Too thin to texture: a {fmtNum(minDepth)} mm cut needs more than{' '}
+          {fmtNum(ctx === 'wall' ? TEXTURE.MIN_WALL_REMAINING : TEXTURE.MIN_LID_REMAINING)} mm left behind it.
+        </p>
+      )}
+      {active && maxDepth >= minDepth - 1e-9 && (
+        <>
+          {!bedFace && (
+            <Field label="Relief">
+              <div className="seg">
+                <button className={mode === 'emboss' ? 'active' : ''} onClick={() => patch({ mode: 'emboss' })}>
+                  Raised
+                </button>
+                <button className={mode === 'deboss' ? 'active' : ''} onClick={() => patch({ mode: 'deboss' })}>
+                  Recessed
+                </button>
+              </div>
+            </Field>
+          )}
+          <Field label={mode === 'emboss' ? 'Height' : 'Depth'}>
+            <NumberInput value={clamp(spec.depth, minDepth, maxDepth)} min={minDepth} max={maxDepth}
+              step={snaps ? layerHeight : 0.1} unit="mm" onChange={(v) => patch({ depth: v })} />
+          </Field>
+          <Field label="Spacing (pitch)">
+            <NumberInput value={spec.pitch} min={minPitch(spec.pattern)} max={TEXTURE.MAX_PITCH} step={0.5}
+              unit="mm" onChange={(v) => patch({ pitch: v })} />
+          </Field>
+          {spec.pattern === 'ridges' && (
+            <Field label="Direction">
+              <div className="seg">
+                <button className={spec.angle === 0 ? 'active' : ''} onClick={() => patch({ angle: 0 })}>
+                  {ridgeLabels[0]}
+                </button>
+                <button className={spec.angle === 90 ? 'active' : ''} onClick={() => patch({ angle: 90 })}>
+                  {ridgeLabels[1]}
+                </button>
+              </div>
+            </Field>
+          )}
+          {resolved && <p className="hint">{describeTexture(resolved)}</p>}
+        </>
+      )}
+    </>
+  )
+}
+
+function describeTexture(r: ResolvedTexture): string {
+  const f = fmtNum(r.feature)
+  const gap = fmtNum(r.pitch - r.feature)
+  const raised = r.mode === 'emboss'
+  const what =
+    r.pattern === 'ridges' ? `${f} mm ${raised ? 'ridges' : 'grooves'} with ${gap} mm flats between`
+    : r.pattern === 'knurl' ? `${f} mm ${raised ? 'bars' : 'grooves'} crossed at 45°, ${fmtNum(r.pitch)} mm apart`
+    : r.pattern === 'hex' ? `${f} mm hexagonal ${raised ? 'bosses' : 'pockets'} with ${gap} mm walls`
+    : `${f} mm ${raised ? 'studs' : 'dimples'}, ${gap} mm apart`
+  const layers = r.layers === null ? '' : ` (${r.layers} layer${r.layers === 1 ? '' : 's'})`
+  return `${what}, ${fmtNum(r.depth)} mm ${raised ? 'high' : 'deep'}${layers}. ${Math.round(r.plateau * 100)}% of the face stays flat.`
 }
 
 // ---------- Skadis-holder controls ----------
