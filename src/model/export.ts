@@ -5,6 +5,7 @@ import { BinModel } from './types'
 import { BoxModel } from './box'
 import { SkadisModel } from './skadis'
 import { LithoModel, buildLitho } from './litho'
+import { FanModel, buildFan, placeFanForPrint } from './fan'
 import { buildBin } from './geometry'
 import { buildBox } from './box'
 import { buildSkadis } from './skadis'
@@ -79,6 +80,29 @@ export function exportLithoSTL(model: LithoModel): Blob {
 
 export function exportLitho3MF(model: LithoModel, meta?: string): Blob {
   return geometryToBlob3MF(lithoExportGeometry(model), meta)
+}
+
+// --- Lithophane fan: one blade per part, laid out on the plate. Like the litho
+// panel, a blade is modelled with its flat back on z=0 and the relief toward
+// +Z — already print space — so nothing is rotated here. No STEP, same reason.
+
+function fanExportGeometries(model: FanModel): THREE.BufferGeometry[] {
+  return placeFanForPrint(buildFan(model).blades, model)
+}
+
+// A fan is many parts, but they are all printed together on one plate, and a
+// zip of a dozen near-identical .stl files would be worse than useless. So the
+// STL is the whole plate merged into one mesh — it slices as laid out, and the
+// blades are still separable in the slicer.
+export function exportFanSTL(model: FanModel): Blob {
+  const blades = fanExportGeometries(model)
+  const combined = blades.length === 1 ? blades[0] : mergeGeometries(blades, false)!
+  return geometryToSTL(combined)
+}
+
+// 3MF keeps the blades as distinct objects, in their plate positions.
+export function exportFan3MF(model: FanModel, meta?: string): Blob {
+  return geometriesToBlob3MF(fanExportGeometries(model), meta)
 }
 
 // --- Sliding-lid box: box body + lid as TWO separate objects, laid out side by

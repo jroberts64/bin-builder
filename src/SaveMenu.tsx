@@ -59,7 +59,10 @@ export default function SaveMenu({ design, onLoad, onNameChange, currentName }: 
   const handleLoad = (id: string) => {
     const d = loadDesign(id)
     if (d) {
-      onLoad({ type: d.type, bin: d.bin, box: d.box, skadis: d.skadis, litho: d.litho }, d.name)
+      onLoad(
+        { type: d.type, bin: d.bin, box: d.box, skadis: d.skadis, litho: d.litho, fan: d.fan },
+        d.name,
+      )
       setOpen(false)
       flash(`Loaded "${d.name}"`)
     }

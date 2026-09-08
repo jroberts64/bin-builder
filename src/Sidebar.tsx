@@ -21,8 +21,20 @@ import {
   textureDepthLimit,
 } from './model/texture'
 import { SkadisModel, HolderShape, HookStyle, OpeningSide, maxOpeningDeg } from './model/skadis'
-import { LithoModel, LithoShape, imageFileToDataURL, prepareLithoImage } from './model/litho'
+import { LithoModel, LithoShape, prepareLithoImage } from './model/litho'
 import { panelHeight } from './model/litho'
+import {
+  FanModel,
+  FanTip,
+  bladeCount,
+  bladeStepRad,
+  fanLayout,
+  fanOuterSize,
+  overlapRadius,
+  prepareFanImage,
+  reliefStartRadius,
+} from './model/fan'
+import { greyLevels, imageFileToDataURL } from './model/relief'
 import { Design, ObjectType, assertNever, toJSON } from './model/serialize'
 import {
   export3MF,
@@ -36,6 +48,8 @@ import {
   exportSkadisSTEP,
   exportLithoSTL,
   exportLitho3MF,
+  exportFanSTL,
+  exportFan3MF,
   downloadBlob,
 } from './model/export'
 import SaveMenu from './SaveMenu'
@@ -46,6 +60,7 @@ interface Props {
   setBox: (m: BoxModel) => void
   setSkadis: (m: SkadisModel) => void
   setLitho: (m: LithoModel) => void
+  setFan: (m: FanModel) => void
   setType: (t: ObjectType) => void
   showBuildPlate: boolean
   setShowBuildPlate: (v: boolean) => void
@@ -66,6 +81,7 @@ const TYPE_TABS: { id: ObjectType; label: string }[] = [
   { id: 'box', label: 'Box' },
   { id: 'skadis', label: 'Skadis' },
   { id: 'litho', label: 'Litho' },
+  { id: 'fan', label: 'Fan' },
 ]
 
 export default function Sidebar({
@@ -74,6 +90,7 @@ export default function Sidebar({
   setBox,
   setSkadis,
   setLitho,
+  setFan,
   setType,
   showBuildPlate,
   setShowBuildPlate,
@@ -117,6 +134,13 @@ export default function Sidebar({
           downloadBlob(exportLithoSTL(design.litho), `${base}.stl`),
         )
         break
+      case 'fan':
+        // Every blade is a different part, but they all print together on one
+        // plate — so the STL is the whole plate as one mesh (see export.ts).
+        prepareFanImage(design.fan).then(() =>
+          downloadBlob(exportFanSTL(design.fan), `${base}.stl`),
+        )
+        break
       default:
         assertNever(design.type)
     }
@@ -141,6 +165,12 @@ export default function Sidebar({
           downloadBlob(exportLitho3MF(design.litho, meta), `${base}.3mf`),
         )
         break
+      case 'fan':
+        // One <object> per blade, in their plate positions.
+        prepareFanImage(design.fan).then(() =>
+          downloadBlob(exportFan3MF(design.fan, meta), `${base}.3mf`),
+        )
+        break
       default:
         assertNever(design.type)
     }
@@ -160,8 +190,9 @@ export default function Sidebar({
         downloadBlob(exportSkadisSTEP(design.skadis), `${base}.step`)
         break
       case 'litho':
-        // No STEP for lithophanes (the button is hidden): a faceted B-rep of a
-        // ~200k-triangle relief would be enormous and useless in CAD.
+      case 'fan':
+        // No STEP for relief objects (the button is hidden): a faceted B-rep of
+        // a ~200k-triangle relief would be enormous and useless in CAD.
         break
       default:
         assertNever(design.type)
@@ -204,6 +235,15 @@ export default function Sidebar({
           <LithoControls
             model={design.litho}
             setModel={setLitho}
+            showBuildPlate={showBuildPlate}
+            setShowBuildPlate={setShowBuildPlate}
+          />
+        )
+      case 'fan':
+        return (
+          <FanControls
+            model={design.fan}
+            setModel={setFan}
             showBuildPlate={showBuildPlate}
             setShowBuildPlate={setShowBuildPlate}
           />
@@ -256,7 +296,7 @@ export default function Sidebar({
           >
             Export 3MF
           </button>
-          {design.type !== 'litho' && (
+          {design.type !== 'litho' && design.type !== 'fan' && (
             <button
               className="btn"
               disabled={!ready}
@@ -1001,7 +1041,10 @@ function LithoControls({
               onChange={(v) => patch({ dither: v })} />
             <p className="hint">
               Flat, brightness is the layer stack, so this range gives only{' '}
-              <b>{greys(model)} grey levels</b> at {model.layerHeight}mm layers.{' '}
+              <b>
+                {greyLevels(model.minThickness, model.maxThickness, model.layerHeight)} grey levels
+              </b>{' '}
+              at {model.layerHeight}mm layers.{' '}
               {model.dither
                 ? 'Dithering picks the nearest printable level per sample and pushes the rounding error into its neighbours, so the local average still tracks the photo — halftone printing, applied to height. Set this to match your slicer. The preview looks grainy up close, which is the point: backlit, the eye averages the halftone into smooth tone instead of reading hard contour lines.'
                 : 'Without dithering, every gradient crossing a level boundary prints as a hard contour line. Turn it on unless you want the raw stepped relief.'}
@@ -1036,16 +1079,247 @@ function LithoControls({
   )
 }
 
-// Distinct grey levels a flat print can resolve: brightness is the stack height,
-// so it's the count of whole layer steps spanning the thickness range. Matches
-// ditherGrid's inward rounding of the range ends in litho.ts.
-const greys = (m: LithoModel) =>
-  Math.max(
-    1,
-    Math.floor(m.maxThickness / m.layerHeight + 1e-6) -
-      Math.ceil(m.minThickness / m.layerHeight - 1e-6) +
-      1,
+// ---------- Lithophane-fan controls ----------
+
+function FanControls({
+  model,
+  setModel,
+  showBuildPlate,
+  setShowBuildPlate,
+}: {
+  model: FanModel
+  setModel: (m: FanModel) => void
+  showBuildPlate: boolean
+  setShowBuildPlate: (v: boolean) => void
+}) {
+  const [inches, setInches] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const patch = (p: Partial<FanModel>) => setModel({ ...model, ...p })
+  const fmtLen = (mm: number) =>
+    inches ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`
+
+  const assembled = model.preview === 'assembled'
+  const n = bladeCount(model)
+  const size = fanOuterSize(model)
+  const layout = fanLayout(model)
+  const stepDeg = (bladeStepRad(model) * 180) / Math.PI
+  const overlap = overlapRadius(model)
+  const reliefStart = reliefStartRadius(model)
+  const tips: { id: FanTip; label: string }[] = [
+    { id: 'petal', label: 'Petal' },
+    { id: 'point', label: 'Pointed' },
+    { id: 'round', label: 'Round' },
+  ]
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const { dataUrl } = await imageFileToDataURL(file)
+      // Start a new picture centred and just covering the fan, so it's framed
+      // before the position controls are touched.
+      patch({ image: dataUrl, imageZoom: 100, imageOffsetX: 0, imageOffsetY: 0 })
+    } catch {
+      // unreadable file — leave the model unchanged
+    }
+    e.target.value = '' // allow re-uploading the same file
+  }
+
+  return (
+    <>
+      <Section title="Photo" defaultOpen>
+        <div className="litho-upload">
+          <button className="btn small" onClick={() => fileRef.current?.click()}>
+            {model.image ? 'Replace photo…' : 'Upload photo…'}
+          </button>
+          {model.image && (
+            <button className="btn small" onClick={() => patch({ image: null })}>
+              Remove
+            </button>
+          )}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={onFile}
+          />
+        </div>
+        {model.image ? (
+          <img className="litho-preview" src={model.image} alt="fan source photo" />
+        ) : (
+          <p className="hint">
+            Upload a photo to spread across the open fan. Until then every blade previews at a
+            uniform mid thickness.
+          </p>
+        )}
+        <Toggle label="Invert (negative)" checked={model.invert}
+          onChange={(v) => patch({ invert: v })} />
+        <p className="hint">
+          One picture spans the whole fan: each blade carries the slice of the photo that lands
+          under it when the fan is open. Dark areas print thick, light areas thin — backlight the
+          fan to reveal the picture.
+        </p>
+      </Section>
+
+      <Section title="Position on the fan" defaultOpen>
+        <Field label="Zoom">
+          <NumberInput value={model.imageZoom} min={25} max={400} step={5} unit="%"
+            onChange={(v) => patch({ imageZoom: v })} />
+        </Field>
+        <Field label="Move across (X)">
+          <NumberInput value={model.imageOffsetX} min={-200} max={200} step={1} unit="mm"
+            onChange={(v) => patch({ imageOffsetX: v })} />
+        </Field>
+        <Field label="Move up / down (Y)">
+          <NumberInput value={model.imageOffsetY} min={-200} max={200} step={1} unit="mm"
+            onChange={(v) => patch({ imageOffsetY: v })} />
+        </Field>
+        <div className="add-row">
+          <button
+            className="btn small"
+            onClick={() => patch({ imageZoom: 100, imageOffsetX: 0, imageOffsetY: 0 })}
+          >
+            Reset framing
+          </button>
+        </div>
+        <p className="hint">
+          The photo is placed over the <b>open fan</b>, so watch the Assembled view while you move
+          it. 100% zoom just covers the fan{model.imageZoom < 100 && ', so at this zoom the blades outside the picture come out at their thinnest (a bright margin)'}
+          . Zoom in to crop to faces; move it to pick what lands on the blades.
+        </p>
+      </Section>
+
+      <Section title="Fan" defaultOpen>
+        <Field label="View">
+          <div className="seg">
+            <button className={assembled ? 'active' : ''}
+              onClick={() => patch({ preview: 'assembled' })}>
+              Assembled
+            </button>
+            <button className={!assembled ? 'active' : ''}
+              onClick={() => patch({ preview: 'flat' })}>
+              Print layout
+            </button>
+          </div>
+        </Field>
+        <p className="hint">
+          Preview only — the export is always the print layout, since a blade has one sensible
+          print pose (flat on its back, relief up).
+        </p>
+        <UnitStepper label="Blades" value={n} min={1} max={24}
+          onChange={(v) => patch({ blades: v })} />
+        <Field label="Open angle (spread)">
+          <NumberInput value={model.spreadDeg} min={20} max={300} step={5} unit="°"
+            onChange={(v) => patch({ spreadDeg: v })} />
+        </Field>
+        <p className="hint">
+          {n < 2
+            ? 'A single blade — add more to make a fan.'
+            : `${n} blades ${stepDeg.toFixed(1)}° apart across ${model.spreadDeg}°.`}
+        </p>
+        <Measurements size={size} fmtLen={fmtLen} inches={inches} setInches={setInches} />
+      </Section>
+
+      <Section title="Blade shape" defaultOpen>
+        <div className="seg">
+          {tips.map((t) => (
+            <button key={t.id} className={model.tip === t.id ? 'active' : ''}
+              onClick={() => patch({ tip: t.id })}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <Field label="Length (pivot to tip)">
+          <NumberInput value={model.bladeLength} min={30} max={250} step={1} unit="mm"
+            onChange={(v) => patch({ bladeLength: v })} />
+        </Field>
+        <Field label="Width (widest)">
+          <NumberInput value={model.bladeWidth} min={8} max={80} step={0.5} unit="mm"
+            onChange={(v) => patch({ bladeWidth: v })} />
+        </Field>
+        <Field label="Neck width (at the pivot)">
+          <NumberInput value={model.neckWidth} min={6} max={60} step={0.5} unit="mm"
+            onChange={(v) => patch({ neckWidth: v })} />
+        </Field>
+        <Field label="Neck length">
+          <NumberInput value={model.neckLength} min={5} max={150} step={1} unit="mm"
+            onChange={(v) => patch({ neckLength: v })} />
+        </Field>
+        <p className="hint">
+          Blades are widest in the middle and narrow to a neck at the pivot, so they can fan out
+          without their hubs fighting. Spans are re-fitted to each other, so a short blade won't
+          produce a broken outline.
+        </p>
+      </Section>
+
+      <Section title="Pivot" defaultOpen>
+        <Field label="Pivot hole">
+          <NumberInput value={model.pivotDiameter} min={0} max={12} step={0.2} unit="mm"
+            onChange={(v) => patch({ pivotDiameter: v })} />
+        </Field>
+        <Field label="Neck thickness (flat zone)">
+          <NumberInput value={model.hubThickness} min={0.6} max={6} step={0.1} unit="mm"
+            onChange={(v) => patch({ hubThickness: v })} />
+        </Field>
+        <Toggle label="Leave the overlapping inner zone plain" checked={model.clearOverlap}
+          onChange={(v) => patch({ clearOverlap: v })} />
+        <p className="hint">
+          The zone around the pivot is left flat and untextured so the blades stack cleanly and
+          turn — {fmtNum(model.hubThickness)} mm each, {fmtNum(n * model.hubThickness)} mm for the
+          whole stack. Rivet it with an M3 screw and nut, or a {fmtNum(model.pivotDiameter)} mm
+          rivet.
+        </p>
+        <p className="hint">
+          {n < 2
+            ? 'With one blade there is nothing to overlap.'
+            : `Blades have to overlap to fold, here out to ${fmtNum(overlap)} mm from the pivot — and backlight crosses every blade in the stack, so that inner zone always reads darker than the photo asks for. ${
+                model.clearOverlap
+                  ? `Left plain: the picture starts at ${fmtNum(reliefStart)} mm and the inner fan is bare. Note it only lines up at ${model.spreadDeg}° — open the fan wider and the bare zone shows.`
+                  : `The picture still covers the whole blade (from ${fmtNum(reliefStart)} mm out), so it reads however far the fan is opened; the inner zone just comes out dark. Turn this on for a deliberately plain inner fan instead.`
+              }`}
+        </p>
+      </Section>
+
+      <Section title="Relief" defaultOpen>
+        <Field label="Min thickness (lightest)">
+          <NumberInput value={model.minThickness} min={0.4} max={3} step={0.1} unit="mm"
+            onChange={(v) => patch({ minThickness: v })} />
+        </Field>
+        <Field label="Max thickness (darkest)">
+          <NumberInput value={model.maxThickness} min={1} max={8} step={0.1} unit="mm"
+            onChange={(v) => patch({ maxThickness: v })} />
+        </Field>
+        <Field label="Detail (sample size)">
+          <NumberInput value={model.pitch} min={0.2} max={1} step={0.05} unit="mm"
+            onChange={(v) => patch({ pitch: v })} />
+        </Field>
+        <Field label="Slicer layer height">
+          <NumberInput value={model.layerHeight} min={0.04} max={0.4} step={0.02} unit="mm"
+            onChange={(v) => patch({ layerHeight: v })} />
+        </Field>
+        <Toggle label="Dither (smooth gradients)" checked={model.dither}
+          onChange={(v) => patch({ dither: v })} />
+        <p className="hint">
+          Blades print flat, so brightness is the layer stack and this range gives only{' '}
+          <b>{greyLevels(model.minThickness, model.maxThickness, model.layerHeight)} grey levels</b>{' '}
+          at {model.layerHeight}mm layers.{' '}
+          {model.dither
+            ? 'Dithering picks the nearest printable level per sample and pushes the rounding error into its neighbours, so local averages still track the photo. The preview looks grainy up close, which is the point: backlit, the eye averages it into smooth tone.'
+            : 'Without dithering, every gradient crossing a level boundary prints as a hard contour line.'}{' '}
+          The sample budget is shared across all {n} blades, so adding blades coarsens the detail.
+        </p>
+      </Section>
+
+      <Section title="General" defaultOpen>
+        <Toggle label="Show Build Plate" checked={showBuildPlate} onChange={setShowBuildPlate} />
+        <p className="hint">
+          {`Exported as ${n} part${n === 1 ? '' : 's'} laid out ${layout.cols} × ${layout.rows} on the plate (${fmtNum(layout.w)} × ${fmtNum(layout.h)} mm), backs down and relief up — already oriented, don’t rotate them in the slicer. 3MF keeps the blades as separate objects; the STL is the whole plate as one mesh.`}
+        </p>
+      </Section>
+    </>
   )
+}
 
 // ---------- shared presentational components ----------
 

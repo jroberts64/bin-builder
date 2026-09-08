@@ -9,9 +9,9 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
 
 ## Features
 
-- **Four object types** — a Gridfinity-style **bin**, a **box** with a choice
-  of top, a **Skadis** pegboard holder, or a **lithophane** panel. Switch via
-  the header tabs.
+- **Five object types** — a Gridfinity-style **bin**, a **box** with a choice
+  of top, a **Skadis** pegboard holder, a **lithophane** panel, or a
+  **lithophane fan**. Switch via the header tabs.
 - **Box tops** — define the inner width/depth/height, then pick a top type:
   - **Sliding lid** — slides into grooves in the side walls, inserts from the
     front, seats against the closed back. Exports box + lid as two parts.
@@ -60,6 +60,27 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     The preview looks grainy up close; backlit, it reads smooth.
   - Exports STL/3MF; the image persists with saves but is left out of share
     links (too big for a URL).
+- **Lithophane fans** — a hand fan whose blades are lithophane panels pivoting on
+  a common hub, so **one photograph spans the whole fan** when it's opened:
+  - **Position the photo on the open fan** — each blade carries the slice of the
+    picture that lands under it once the fan is open, so the image reads
+    continuously across the blades. Zoom and move it over the fan and watch the
+    assembled preview; 100% zoom just covers the fan.
+  - **Fan shape** — blade count and open angle, then the blade itself: length,
+    width, neck width/length and a **petal**, **pointed** or **round** tip.
+  - **Pivot** — the zone around the hub is left flat and untextured at its own
+    thickness so the blades stack cleanly and turn, with a hole for an M3 screw
+    and nut or a rivet. Blades have to overlap to fold, and backlight crosses the
+    whole stack, so the inner fan always reads darker; the picture still covers
+    the whole blade so it works however far the fan is opened (or leave that
+    inner zone deliberately plain).
+  - **Relief** — the same min/max thickness, detail and layer-step **dithering**
+    as the panel. The sample budget is shared across the blades, so adding blades
+    coarsens detail rather than building a mesh too heavy to slice.
+  - **Two views** — the fan **assembled** (to frame the photo) or the **print
+    layout**. Export is always the layout: blades laid out on the plate, backs
+    down and relief up, already oriented. 3MF keeps them as separate objects; the
+    STL is the whole plate as one mesh.
 - **Gridfinity toggle** — switch the Gridfinity foot, baseplate clearance and
   magnet/screw sockets on or off. Off = a plain flat-bottomed tray. Independent
   of how the bin is sized.

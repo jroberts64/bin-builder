@@ -17,6 +17,7 @@ import {
   maxOpeningDeg,
 } from './skadis'
 import { LithoModel, LithoShape, LithoOrientation, defaultLitho } from './litho'
+import { FanModel, FanTip, FanPreview, defaultFan } from './fan'
 
 // Versioned (de)serialization for a design. Everything that persists or shares —
 // localStorage, .json files, share URLs — goes through here so there is exactly
@@ -27,14 +28,14 @@ import { LithoModel, LithoShape, LithoOrientation, defaultLitho } from './litho'
 
 export const SCHEMA_VERSION = 2
 
-export type ObjectType = 'bin' | 'box' | 'skadis' | 'litho'
+export type ObjectType = 'bin' | 'box' | 'skadis' | 'litho' | 'fan'
 
 // The single source of truth for the set of object types. Iterate this to build
 // UI/validation instead of hardcoding the members, and pair every `switch` on an
 // ObjectType with `assertNever` in its default so adding a member to the union
 // turns each unhandled dispatch into a compile error (the checklist for a new
 // type — see the "Adding a third object type" recipe in CLAUDE.md).
-export const OBJECT_TYPES: readonly ObjectType[] = ['bin', 'box', 'skadis', 'litho']
+export const OBJECT_TYPES: readonly ObjectType[] = ['bin', 'box', 'skadis', 'litho', 'fan']
 
 // Exhaustiveness guard. Reaching it means an ObjectType was added without
 // updating this dispatch; the `never` parameter makes that a compile error.
@@ -50,6 +51,7 @@ export interface Design {
   box: BoxModel
   skadis: SkadisModel
   litho: LithoModel
+  fan: FanModel
 }
 
 export function defaultDesign(): Design {
@@ -59,6 +61,7 @@ export function defaultDesign(): Design {
     box: defaultBox(),
     skadis: defaultSkadis(),
     litho: defaultLitho(),
+    fan: defaultFan(),
   }
 }
 
@@ -70,6 +73,7 @@ export interface SavedDesign {
   box: BoxModel
   skadis: SkadisModel
   litho: LithoModel
+  fan: FanModel
 }
 
 const LIPS: LipStyle[] = ['default', 'thin', 'none']
@@ -182,9 +186,10 @@ export function coerceSkadis(raw: unknown): SkadisModel {
 const LITHO_SHAPES: LithoShape[] = ['rect', 'round']
 const LITHO_ORIENTATIONS: LithoOrientation[] = ['flat', 'standing']
 
-// The litho image is a data URL. Cap the size so a hostile payload can't bloat
-// localStorage through the coerce path; anything unrecognisable → no image.
-function coerceLithoImage(value: unknown): string | null {
+// A relief source image (lithophane panel or fan) is a data URL. Cap the size so
+// a hostile payload can't bloat localStorage through the coerce path; anything
+// unrecognisable → no image.
+function coerceReliefImage(value: unknown): string | null {
   if (typeof value !== 'string') return null
   if (!value.startsWith('data:image/')) return null
   if (value.length > 2_000_000) return null
@@ -197,7 +202,7 @@ export function coerceLitho(raw: unknown): LithoModel {
   const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<LithoModel>
   return {
     shape: oneOf(m.shape, LITHO_SHAPES, d.shape),
-    image: coerceLithoImage(m.image),
+    image: coerceReliefImage(m.image),
     width: num(m.width, d.width, 20, 300),
     height: num(m.height, d.height, 20, 300),
     cornerRadius: num(m.cornerRadius, d.cornerRadius, 0, 40),
@@ -210,6 +215,40 @@ export function coerceLitho(raw: unknown): LithoModel {
     orientation: oneOf(m.orientation, LITHO_ORIENTATIONS, d.orientation),
     dither: bool(m.dither, d.dither),
     layerHeight: num(m.layerHeight, d.layerHeight, 0.04, 0.4),
+  }
+}
+
+const FAN_TIPS: FanTip[] = ['petal', 'point', 'round']
+const FAN_PREVIEWS: FanPreview[] = ['assembled', 'flat']
+
+// Turn arbitrary parsed JSON into a guaranteed-valid FanModel. The blade profile
+// spans (neck / flare / tip) are re-clamped against each other inside
+// `bladeProfile`, so these ranges only have to be individually sane.
+export function coerceFan(raw: unknown): FanModel {
+  const d = defaultFan()
+  const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<FanModel>
+  return {
+    image: coerceReliefImage(m.image),
+    blades: Math.round(num(m.blades, d.blades, 1, 24)),
+    spreadDeg: num(m.spreadDeg, d.spreadDeg, 20, 300),
+    bladeLength: num(m.bladeLength, d.bladeLength, 30, 250),
+    bladeWidth: num(m.bladeWidth, d.bladeWidth, 8, 80),
+    neckWidth: num(m.neckWidth, d.neckWidth, 6, 60),
+    neckLength: num(m.neckLength, d.neckLength, 5, 150),
+    tip: oneOf(m.tip, FAN_TIPS, d.tip),
+    minThickness: num(m.minThickness, d.minThickness, 0.4, 3),
+    maxThickness: num(m.maxThickness, d.maxThickness, 1, 8),
+    hubThickness: num(m.hubThickness, d.hubThickness, 0.6, 6),
+    pivotDiameter: num(m.pivotDiameter, d.pivotDiameter, 0, 12),
+    pitch: num(m.pitch, d.pitch, 0.2, 1),
+    invert: bool(m.invert, d.invert),
+    clearOverlap: bool(m.clearOverlap, d.clearOverlap),
+    imageZoom: num(m.imageZoom, d.imageZoom, 25, 400),
+    imageOffsetX: num(m.imageOffsetX, d.imageOffsetX, -300, 300),
+    imageOffsetY: num(m.imageOffsetY, d.imageOffsetY, -300, 300),
+    dither: bool(m.dither, d.dither),
+    layerHeight: num(m.layerHeight, d.layerHeight, 0.04, 0.4),
+    preview: oneOf(m.preview, FAN_PREVIEWS, d.preview),
   }
 }
 
@@ -252,6 +291,7 @@ export function coerceDesign(raw: unknown): Design {
       box: coerceBox(o.box),
       skadis: coerceSkadis(o.skadis),
       litho: coerceLitho(o.litho),
+      fan: coerceFan(o.fan),
     }
   }
   if ('model' in o) {
@@ -261,6 +301,7 @@ export function coerceDesign(raw: unknown): Design {
       box: defaultBox(),
       skadis: defaultSkadis(),
       litho: defaultLitho(),
+      fan: defaultFan(),
     }
   }
   return {
@@ -269,6 +310,7 @@ export function coerceDesign(raw: unknown): Design {
     box: defaultBox(),
     skadis: defaultSkadis(),
     litho: defaultLitho(),
+    fan: defaultFan(),
   }
 }
 
@@ -283,6 +325,7 @@ export function serializeDesign(design: Design, name?: string): SavedDesign {
     box: design.box,
     skadis: design.skadis,
     litho: design.litho,
+    fan: design.fan,
   }
 }
 
@@ -316,10 +359,11 @@ function base64UrlDecode(s: string): string {
 
 export function encodeShareParam(design: Design, name?: string): string {
   const saved = serializeDesign(design, name)
-  // The litho image data-URL would blow the URL far past practical limits, so
-  // share links carry the litho settings only (localStorage/.json keep the
-  // image). The recipient re-uploads the picture.
+  // A relief image data-URL would blow the URL far past practical limits, so
+  // share links carry the lithophane/fan settings only (localStorage/.json keep
+  // the image). The recipient re-uploads the picture.
   if (saved.litho.image) saved.litho = { ...saved.litho, image: null }
+  if (saved.fan.image) saved.fan = { ...saved.fan, image: null }
   // Minify (no pretty-print) for shorter URLs.
   return base64UrlEncode(JSON.stringify(saved))
 }

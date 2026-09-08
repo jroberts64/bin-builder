@@ -5,6 +5,7 @@ import { BinModel, resolvedSize } from './model/types'
 import { BoxModel, boxOuterSize } from './model/box'
 import { SkadisModel, skadisOuterSize } from './model/skadis'
 import { LithoModel, lithoOuterSize } from './model/litho'
+import { FanModel, fanOuterSize } from './model/fan'
 import { initCSG } from './model/csg'
 import { Design, ObjectType, assertNever, defaultDesign, readShareUrl } from './model/serialize'
 import { readAutosave, writeAutosave } from './model/storage'
@@ -43,6 +44,7 @@ export default function App() {
   const setBox = (box: BoxModel) => setDesign((d) => ({ ...d, box }))
   const setSkadis = (skadis: SkadisModel) => setDesign((d) => ({ ...d, skadis }))
   const setLitho = (litho: LithoModel) => setDesign((d) => ({ ...d, litho }))
+  const setFan = (fan: FanModel) => setDesign((d) => ({ ...d, fan }))
   const setType = (type: ObjectType) => {
     setDesign((d) => ({ ...d, type }))
     setFitSignal((s) => s + 1)
@@ -64,6 +66,8 @@ export default function App() {
         return skadisOuterSize(design.skadis)
       case 'litho':
         return lithoOuterSize(design.litho)
+      case 'fan':
+        return fanOuterSize(design.fan)
       default:
         return assertNever(design.type)
     }
@@ -77,6 +81,7 @@ export default function App() {
         setBox={setBox}
         setSkadis={setSkadis}
         setLitho={setLitho}
+        setFan={setFan}
         setType={setType}
         showBuildPlate={showBuildPlate}
         setShowBuildPlate={setShowBuildPlate}

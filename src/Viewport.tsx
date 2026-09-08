@@ -5,6 +5,7 @@ import { buildBin } from './model/geometry'
 import { buildBox } from './model/box'
 import { buildSkadis } from './model/skadis'
 import { buildLitho, orientLithoForPreview, prepareLithoImage } from './model/litho'
+import { buildFan, orientFanForPreview, prepareFanImage } from './model/fan'
 import { Design, assertNever } from './model/serialize'
 
 interface Props {
@@ -20,7 +21,7 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
   const cameraRef = useRef<THREE.PerspectiveCamera>()
   const controlsRef = useRef<OrbitControls>()
   const rendererRef = useRef<THREE.WebGLRenderer>()
-  const partsRef = useRef<THREE.Group>() // holds 1 (bin) or 2 (box+lid) meshes
+  const partsRef = useRef<THREE.Group>() // 1 mesh (bin), 2 (box+lid) or one per fan blade
   const plateRef = useRef<THREE.Group>()
 
   // --- One-time scene setup ---
@@ -134,6 +135,16 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
             group.add(new THREE.Mesh(orientLithoForPreview(litho, design.litho), mat(0x4a9eff)))
             break
           }
+          case 'fan': {
+            // Either the fan opened out (so the picture across the blades is
+            // readable) or the plate layout the export writes.
+            const blades = orientFanForPreview(buildFan(design.fan).blades, design.fan)
+            // Alternate shades so the blade stack stays legible when assembled.
+            blades.forEach((b, i) =>
+              group.add(new THREE.Mesh(b, mat(i % 2 ? 0x8ec5ff : 0x4a9eff))),
+            )
+            break
+          }
           default:
             assertNever(design.type)
         }
@@ -145,17 +156,24 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
       partsRef.current = group
     }
 
-    // The litho image decodes asynchronously (browser image pipeline); make sure
-    // it's in the cache before the synchronous build. `cancelled` guards against
-    // a stale decode resolving after the design has already changed again.
+    // A relief image (lithophane panel or fan) decodes asynchronously (browser
+    // image pipeline); make sure it's in the cache before the synchronous build.
+    // `cancelled` guards against a stale decode resolving after the design has
+    // already changed again.
     let cancelled = false
     const t = setTimeout(() => {
-      if (design.type === 'litho') {
-        prepareLithoImage(design.litho).then(
+      const prep =
+        design.type === 'litho'
+          ? prepareLithoImage(design.litho)
+          : design.type === 'fan'
+            ? prepareFanImage(design.fan)
+            : null
+      if (prep) {
+        prep.then(
           () => {
             if (!cancelled) rebuild()
           },
-          (err) => console.error('litho image failed', err),
+          (err) => console.error('relief image failed', err),
         )
       } else {
         rebuild()
