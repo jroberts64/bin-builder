@@ -27,6 +27,7 @@ import {
   FanModel,
   FanTip,
   MIN_SCREW_PIVOT,
+  autoEyeThickness,
   bladeCount,
   bladeStepRad,
   fanLayout,
@@ -1106,6 +1107,8 @@ function FanControls({
   const screw = model.pivotStyle === 'screw'
   const pv = fanPivot(model)
   const plate = hubPlateThickness(model)
+  const autoEye = autoEyeThickness(model)
+  const eyeOverride = model.hubThickness > autoEye + 1e-6
   const n = bladeCount(model)
   const size = fanOuterSize(model)
   const layout = fanLayout(model)
@@ -1286,18 +1289,20 @@ function FanControls({
             {`Barrel ${fmtNum(pv.barrelOD)} mm through the blades, with a ${fmtNum(pv.thread.majorD)} mm thread at ${fmtNum(pv.thread.pitch)} mm pitch inside it — coarse on purpose, and its own profile rather than a metric one, because a standard fine pitch here gives teeth a nozzle can’t resolve. Barrel ${fmtNum(pv.barrelLen)} mm long for a ${fmtNum(pv.stackH)} mm stack, so the assembled hub is ${fmtNum(pv.totalH)} mm thick and the screw takes ${fmtNum(pv.threadLen)} mm of thread. The hole can’t go below ${fmtNum(MIN_SCREW_PIVOT)} mm — the thread has to fit inside the barrel and still print.`}
           </p>
         )}
-        <Field label="Eye plate thickness">
-          <NumberInput value={model.hubThickness} min={0.6} max={8} step={0.1} unit="mm"
-            onChange={(v) => patch({ hubThickness: v })} />
-        </Field>
+        <Toggle label="Thicker eye for strength" checked={eyeOverride}
+          onChange={(v) => patch({ hubThickness: v ? +(autoEye + 0.6).toFixed(2) : 0 })} />
+        {eyeOverride && (
+          <Field label="Eye plate thickness">
+            <NumberInput value={model.hubThickness} min={autoEye} max={8} step={0.1} unit="mm"
+              onChange={(v) => patch({ hubThickness: v })} />
+          </Field>
+        )}
         <Toggle label="Leave the overlapping inner zone plain" checked={model.clearOverlap}
           onChange={(v) => patch({ clearOverlap: v })} />
         <p className="hint">
-          {`The eye around the pivot is left flat and untextured so the blades stack cleanly and turn. Because they sit eye-to-eye, that thickness is also the gap between blades — so it has to clear the relief, or a blade’s picture jams into the back of the next one where they overlap and the fan won’t fold.${
-            plate > model.hubThickness + 1e-6
-              ? ` Raised to ${fmtNum(plate)} mm to clear the ${fmtNum(model.maxThickness)} mm relief.`
-              : ''
-          } ${fmtNum(plate)} mm each, ${fmtNum(n * plate)} mm for the stack. The eye itself is ${fmtNum(hubDiameter(model))} mm across, sized to keep material round the hole.`}
+          {`The eye around the pivot is left flat and untextured so the blades stack cleanly and turn. Because they sit eye-to-eye, that thickness is also the gap between blades — so it can never be thinner than the relief, or a blade’s picture jams into the back of the next one where they overlap and the fan won’t fold. It tracks the relief automatically (${fmtNum(autoEye)} mm right now); to thin the blade, thin the relief. Turn this on only to make the eye deliberately thicker.${
+            eyeOverride ? ` Set to ${fmtNum(plate)} mm, ${fmtNum(plate - autoEye)} mm above the minimum.` : ''
+          } The eye is ${fmtNum(hubDiameter(model))} mm across, sized to keep material round the hole.`}
         </p>
         <p className="hint">
           {n < 2
@@ -1329,6 +1334,11 @@ function FanControls({
         </Field>
         <Toggle label="Dither (smooth gradients)" checked={model.dither}
           onChange={(v) => patch({ dither: v })} />
+        <p className="hint">
+          {`This range is what sets how thick a blade is: ${fmtNum(plate)} mm${
+            eyeOverride ? ' (held there by the thicker eye below)' : ` — the ${fmtNum(model.maxThickness)} mm darkest point plus the clearance the next blade in the stack needs`
+          }, so the hub stacks to ${fmtNum(n * plate)} mm. Thin the blade by thinning this range. Contrast is the ratio of the two, not the difference, so scaling both down keeps the picture: ${fmtNum(model.minThickness)}/${fmtNum(model.maxThickness)} is ${(model.maxThickness / model.minThickness).toFixed(1)}×.`}
+        </p>
         <p className="hint">
           Blades print flat, so brightness is the layer stack and this range gives only{' '}
           <b>{greyLevels(model.minThickness, model.maxThickness, model.layerHeight)} grey levels</b>{' '}

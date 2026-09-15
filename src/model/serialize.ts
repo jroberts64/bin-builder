@@ -252,7 +252,9 @@ export function coerceFan(raw: unknown): FanModel {
     tip: oneOf(m.tip, FAN_TIPS, d.tip),
     minThickness: num(m.minThickness, d.minThickness, 0.4, 3),
     maxThickness: num(m.maxThickness, d.maxThickness, 1, 8),
-    hubThickness: num(m.hubThickness, d.hubThickness, 0.6, 8),
+    // 0 = auto (track the relief). A save from before the auto default keeps its
+    // explicit value, which still reads as a deliberate "thicker eye" override.
+    hubThickness: num(m.hubThickness, d.hubThickness, 0, 8),
     pivotStyle,
     pivotDiameter: num(
       m.pivotDiameter,

@@ -77,9 +77,13 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     supports needed. Or pick **plain hole** and use your own M3 hardware.
   - **Pivot zone** — the eye around the pivot is left flat and untextured so the
     blades stack cleanly and turn. Since they sit eye-to-eye, that thickness is
-    also the gap between blades, so it's raised automatically to clear the relief
-    — otherwise a blade's picture jams into the back of the next one and the fan
-    won't fold. Blades have to overlap to fold, and backlight crosses the whole
+    also the gap between blades, so it tracks the relief automatically — a
+    thinner eye would let a blade's picture jam into the back of the next one and
+    the fan wouldn't fold. So **the relief range alone decides how thick a blade
+    is**; thin the range to thin the blade (contrast is the ratio of min to max,
+    not the difference, so scaling both down keeps the picture). There's an
+    override if you want a deliberately thicker eye for strength.
+  - **Overlap** — blades have to overlap to fold, and backlight crosses the whole
     stack, so the inner fan always reads darker; the picture still covers the
     whole blade so it works however far the fan is opened (or leave that inner
     zone deliberately plain).

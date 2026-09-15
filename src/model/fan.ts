@@ -49,8 +49,10 @@ export interface FanModel {
   tip: FanTip // blade tip silhouette
   minThickness: number // mm, thickness of the lightest areas
   maxThickness: number // mm, thickness of the darkest areas
-  hubThickness: number // mm, flat thickness of the eye/neck zone — a LOWER BOUND;
-  // it also sets the blade spacing, so `hubPlateThickness` raises it to clear the relief
+  hubThickness: number // mm, flat thickness of the eye/neck zone. 0 = AUTO: track the
+  // relief, which is what the stack needs. Above that it's an explicit floor — a
+  // deliberately thicker eye for strength. It can never go BELOW the relief (see
+  // `hubPlateThickness`), so a value under the auto one would be a no-op.
   pivotStyle: FanPivotStyle // printed screw, or a plain hole for hardware
   pivotDiameter: number // mm, the hole through the blade eye
   pitch: number // mm per relief sample
@@ -74,9 +76,9 @@ export function defaultFan(): FanModel {
     neckWidth: 12,
     neckLength: 22,
     tip: 'petal',
-    minThickness: 0.8,
-    maxThickness: 2,
-    hubThickness: 2.4,
+    minThickness: 0.6,
+    maxThickness: 1.6,
+    hubThickness: 0, // auto: track the relief
     pivotStyle: 'screw',
     pivotDiameter: 8,
     pitch: 0.35,
@@ -109,8 +111,12 @@ const MAX_CELLS = 150_000
 // is no cliff between them.
 const HUB_BLEND = 2
 // Clearance between a blade's relief and the back of the next blade in the stack
-// (see `hubPlateThickness`).
-const BLADE_SWING_GAP = 0.3
+// (see `hubPlateThickness`). Small on purpose: the blades are separate parts
+// assembled by hand, so unlike a print-in-place hinge there is no risk of them
+// fusing — this only has to cover print tolerance and let them slide. Every
+// 0.1mm here is another 0.1mm on every blade AND on the hub stack, which is what
+// makes a fan feel chunky.
+const BLADE_SWING_GAP = 0.2
 // Material left around the pivot hole in the blade eye. This is what gives the
 // blade its bulbous eye once the hole is sized for a printed screw.
 const HUB_RING = 3
@@ -163,17 +169,34 @@ export function hubDiameter(m: FanModel): number {
   return Math.max(m.neckWidth, effPivotDiameter(m) + 2 * HUB_RING)
 }
 
-// Thickness of the flat eye/neck plate — and therefore the SPACING between
-// blades in the stack, since the blades sit eye-to-eye on the barrel.
+// The thinnest the eye plate may be: just clear of the relief.
 //
-// That makes it load-bearing, not cosmetic: blade i occupies z ∈ [i·p, i·p + t]
-// where p is this spacing, so anywhere two blades overlap (which is most of the
-// fan — see `overlapRadius`) the relief only clears the back of the next blade
-// if t ≤ p. The relief reaches `maxThickness`, so a thinner eye than that jams
-// the fan solid and it can't be folded. The model's `hubThickness` is therefore
-// a lower bound that gets raised to clear the relief plus a swing gap.
+// This is the floor because the eye plate's thickness is also the SPACING
+// between blades — they sit eye-to-eye on the barrel. Blade i occupies
+// z ∈ [i·p, i·p + t] where p is that spacing, so anywhere two blades overlap
+// (which is most of the fan — see `overlapRadius`) the relief only clears the
+// back of the next blade if t ≤ p. The relief reaches `maxThickness`, so an eye
+// thinner than that jams the fan solid and it can't be folded.
+export function autoEyeThickness(m: FanModel): number {
+  return effMaxThickness(m) + BLADE_SWING_GAP
+}
+
+// Thickness of the flat eye/neck plate, and therefore both the blade's overall
+// thickness and the stack pitch.
+//
+// `hubThickness: 0` means AUTO — track the relief, which is all the stack needs.
+// A larger value is an explicit override for a deliberately thicker eye; a
+// smaller one is impossible, so it is simply floored.
+//
+// It used to be *only* a lower bound, with no auto: the default sat a hair above
+// the floor, so the eye control and the relief control each held the other's
+// result in place. Moving either one alone did nothing (dragging the eye across
+// its whole range moved the blade by 0.1mm; dropping the relief moved it not at
+// all, while quietly halving the picture's contrast) and the only way to a
+// thinner blade was to move both, in the right order. Hence the auto default:
+// one control — the relief range — decides how thick a blade is.
 export function hubPlateThickness(m: FanModel): number {
-  return Math.max(m.hubThickness, effMaxThickness(m) + BLADE_SWING_GAP)
+  return Math.max(m.hubThickness, autoEyeThickness(m))
 }
 
 export interface FanPivot {
