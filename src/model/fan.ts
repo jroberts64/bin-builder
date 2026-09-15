@@ -83,12 +83,21 @@ export function defaultFan(): FanModel {
     // Proportions taken off the commercial BTS fan (see the tonal-range note
     // below), which is a much more elegant blade than the stubby one this used
     // to default to: a long 4.8:1 blade on a neck pinched to ~0.29 of its width,
-    // so the eye reads as a boss and the fan closes to a slim stick. Its ratios,
-    // not its absolute size — at its real 133mm the plate layout is 183x283mm
-    // and needs two plates (which is exactly what it ships as). At 115mm the
-    // layout is 159x247mm, so the default still lands on one 256mm bed.
-    // Measured there / here: length:width 4.78 / 4.79, neck:width 0.29 / 0.29,
-    // neckLength:length 0.218 / 0.217, 11 blades / 11 blades.
+    // so the eye reads as a boss and the fan closes to a slim stick. Its real
+    // dimensions, not merely its ratios: 133x28mm blades on an 8mm neck, eleven
+    // of them, giving a 262x140mm open fan — a concert fan rather than the
+    // 197mm one this used to default to.
+    //
+    // THE PLATE LAYOUT NO LONGER FITS A 256mm BED. It is 183x283mm, 27mm too
+    // deep, because the layout is two rows of (bladeLength + eye + gap) and a
+    // 133mm blade makes each row 143mm. Blade COUNT does not help — nine blades
+    // at this length are still 283mm deep — and one row of twelve items would
+    // be 324mm wide, so no arrangement of this fan fits a 256 bed. That is
+    // inherent to the size, and the reference has exactly the same problem: it
+    // ships as TWO plates, six items on one and five on the other. A single row
+    // is only 183x140mm, so a per-row split lands comfortably on a 256 bed if
+    // multi-plate export is ever built. Note `LAYOUT_MAX_W` bounds layout WIDTH
+    // only and does not protect against this.
     //
     // The range is snapped to the layer height below, which is worth doing
     // because `ditherGrid` rounds the ends INWARD to whole layers: off-grid ends
@@ -104,10 +113,10 @@ export function defaultFan(): FanModel {
     // so it can be done exactly.
     blades: 11,
     spreadDeg: 160,
-    bladeLength: 115,
-    bladeWidth: 24,
-    neckWidth: 7,
-    neckLength: 25,
+    bladeLength: 133,
+    bladeWidth: 28,
+    neckWidth: 8,
+    neckLength: 29,
     tip: 'petal',
     // The tonal range IS the picture's contrast: transmission through the relief
     // is e^(-mu*t), so what the eye gets is set by the difference between these
