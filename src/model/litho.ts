@@ -78,7 +78,14 @@ export function defaultLitho(): LithoModel {
     mountHoleDiameter: 4,
     orientation: 'flat',
     dither: true,
-    layerHeight: 0.2,
+    // Matched to the fan's reasoning: 0.8-3.0 divides exactly at both 0.2 and
+    // 0.1, so the range loses nothing either way (3.33 stops), but 0.1 gives 23
+    // printable greys against 0.2's 12 -- and it divides the usual 0.2mm first
+    // layer, so the dither grid and the printer's real layer boundaries line up.
+    // This is a "match your slicer" field; 0.1 is just the better guess for a
+    // relief. (Standing panels ignore dithering entirely -- tone is drawn by
+    // wall width there -- so this only changes the flat default.)
+    layerHeight: 0.1,
   }
 }
 

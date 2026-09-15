@@ -88,6 +88,19 @@ export function defaultFan(): FanModel {
     // layout is 159x247mm, so the default still lands on one 256mm bed.
     // Measured there / here: length:width 4.78 / 4.79, neck:width 0.29 / 0.29,
     // neckLength:length 0.218 / 0.217, 11 blades / 11 blades.
+    //
+    // The range is snapped to the layer height below, which is worth doing
+    // because `ditherGrid` rounds the ends INWARD to whole layers: off-grid ends
+    // are simply thrown away. 0.3-2.2 at 0.1mm is 3 and 22 layers exactly, so
+    // nothing is lost and the modelled relief is what the printer can build --
+    // 20 grey levels and 2.88 stops, against 0.35-2.2's 19 levels and 2.73.
+    // The loss is NOT monotonic in layer height, so a finer setting is not
+    // reliably better: over this range NOTHING between 0.2 and 0.1 beats 0.2 --
+    // 0.16 is worse (2.67), 0.15 and 0.12 merely tie (2.73), 0.14 is worse
+    // (2.54), and only 0.1 gains. It is the ends rounding in that decides it,
+    // e.g. at 0.16 `ceil(0.3/0.16)` is 2 so the highlights floor at 0.32mm.
+    // Re-snap the range if you change layer height; the controls step in 0.01
+    // so it can be done exactly.
     blades: 11,
     spreadDeg: 160,
     bladeLength: 115,
@@ -102,7 +115,7 @@ export function defaultFan(): FanModel {
     // (0.33–2.21mm, 0.12mm layers) is what set these. The thin end is free:
     // blade spacing follows maxThickness alone, so only the thick end costs
     // stack height (0.4mm/blade here, ~3.6mm on a nine-blade hub).
-    minThickness: 0.35,
+    minThickness: 0.3,
     maxThickness: 2.2,
     hubThickness: 0, // auto: track the relief
     pivotStyle: 'screw',
@@ -115,7 +128,11 @@ export function defaultFan(): FanModel {
     imageOffsetX: 0,
     imageOffsetY: 0,
     dither: true,
-    layerHeight: 0.2,
+    // 0.1 rather than 0.2: a blade is 2.2mm, so this only doubles it to 22
+    // layers, and it nearly doubles the printable greys (10 -> 20). It also
+    // divides the usual 0.2mm first layer, so the dither's grid and the
+    // printer's real layer boundaries coincide instead of sitting offset.
+    layerHeight: 0.1,
     preview: 'assembled',
   }
 }
