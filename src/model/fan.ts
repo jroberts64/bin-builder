@@ -112,7 +112,15 @@ export function defaultFan(): FanModel {
     // Re-snap the range if you change layer height; the controls step in 0.01
     // so it can be done exactly.
     blades: 11,
-    spreadDeg: 160,
+    // 150°, not the 160° this used to be, because blade count, spread, length
+    // and width are ONE CONSTRAINT APART and 160° broke it: the blades only
+    // reach each other at ~149° (`bladesMeetAtDeg`), so a 160° fan stood open
+    // with wedge-shaped gaps between every pair — 15% of its area. Closing that
+    // by widening the blade instead would work, but it drags the silhouette off
+    // the reference proportions (4.4:1 rather than 4.8:1), and the reference
+    // solves it the other way: a 28mm blade opening to ~141°. Costs 6mm of fan
+    // width against 160°, since sin is flat up there.
+    spreadDeg: 150,
     bladeLength: 133,
     bladeWidth: 28,
     neckWidth: 8,
@@ -423,8 +431,13 @@ function halfWidthAt(p: BladeProfile, y: number): number {
     const s = clamp01((y - p.tipStart) / Math.max(1e-6, p.L - p.tipStart))
     return p.hw * clamp01(tipShape(p.tip, s))
   }
+  // LINEAR, not smoothstepped. Blades tile the open fan exactly when
+  // halfWidth(r) = r·sin(Δθ/2) — a straight wedge from the pivot. A smoothstep
+  // starts shallow and so runs under that line through the inner half of the
+  // blade, which is a wedge-shaped GAP between neighbours (15% of the fan area
+  // at the default, against 11% for the straight taper).
   const t = clamp01((y - p.neck) / Math.max(1e-6, p.flare))
-  return p.neckHW + (p.hw - p.neckHW) * smooth(t)
+  return p.neckHW + (p.hw - p.neckHW) * t
 }
 
 // Same, but including the round root cap below the pivot (y < 0), so this is the
@@ -432,6 +445,24 @@ function halfWidthAt(p: BladeProfile, y: number): number {
 function silhouetteHalfWidth(p: BladeProfile, y: number): number {
   if (y < 0) return Math.sqrt(Math.max(0, p.r0 * p.r0 - y * y))
   return halfWidthAt(p, y)
+}
+
+// The spread at which adjacent blades exactly TOUCH at their widest point.
+//
+// Blades tile the open fan when `halfWidth(r) = r·sin(Δθ/2)`; the binding radius
+// is where the blade is widest, just before the tip. Open the fan wider than
+// this and wedge-shaped gaps appear between blades; narrower and they bury each
+// other. Four controls — blade count, spread, length and width — are one
+// constraint apart, and nothing in the geometry stops them disagreeing, so the
+// UI reports this number rather than silently resolving it.
+export function bladesMeetAtDeg(m: FanModel): number {
+  const p = bladeProfile(m)
+  // The binding radius is where the blade FIRST reaches full width — the end of
+  // the flare, not the start of the tip. It stays full width between the two,
+  // and the inner end of that run is what touches its neighbour first.
+  const rWidest = Math.min(p.tipStart, p.neck + p.flare)
+  const half = Math.asin(Math.min(1, p.hw / Math.max(1e-6, rWidest)))
+  return ((2 * half * 180) / Math.PI) * (bladeCount(m) - 1)
 }
 
 // Distance in from the blade's silhouette, for the border rim.

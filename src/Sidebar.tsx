@@ -30,6 +30,7 @@ import {
   autoEyeThickness,
   bladeCount,
   bladeStepRad,
+  bladesMeetAtDeg,
   fanLayout,
   fanOuterSize,
   fanPivot,
@@ -1254,6 +1255,8 @@ function FanControls({
           {n < 2
             ? 'A single blade — add more to make a fan.'
             : `${n} blades ${stepDeg.toFixed(1)}° apart across ${model.spreadDeg}°.`}
+          {' '}Blades meet at {fmtNum(Math.round(bladesMeetAtDeg(model)))}° — open wider than that
+          and gaps show between them, narrower and they bury each other.
         </p>
         <Measurements size={size} fmtLen={fmtLen} inches={inches} setInches={setInches} />
       </Section>
