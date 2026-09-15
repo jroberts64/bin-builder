@@ -1009,11 +1009,11 @@ function LithoControls({
 
       <Section title="Relief" defaultOpen>
         <Field label="Min thickness (lightest)">
-          <NumberInput value={model.minThickness} min={0.4} max={3} step={0.1} unit="mm"
+          <NumberInput value={model.minThickness} min={0.4} max={3} step={0.01} unit="mm"
             onChange={(v) => patch({ minThickness: v })} />
         </Field>
         <Field label="Max thickness (darkest)">
-          <NumberInput value={model.maxThickness} min={1} max={8} step={0.1} unit="mm"
+          <NumberInput value={model.maxThickness} min={1} max={8} step={0.01} unit="mm"
             onChange={(v) => patch({ maxThickness: v })} />
         </Field>
         <Field label="Detail (sample size)">
@@ -1048,7 +1048,7 @@ function LithoControls({
         {flat && (
           <>
             <Field label="Slicer layer height">
-              <NumberInput value={model.layerHeight} min={0.04} max={0.4} step={0.02} unit="mm"
+              <NumberInput value={model.layerHeight} min={0.04} max={0.4} step={0.01} unit="mm"
                 onChange={(v) => patch({ layerHeight: v })} />
             </Field>
             <Toggle label="Dither (smooth gradients)" checked={model.dither}
@@ -1332,13 +1332,17 @@ function FanControls({
         </p>
       </Section>
 
+      {/* 0.01 steps, not 0.1: thickness is matched to a whole number of layers
+          (0.12mm layers want 0.36, not 0.4), and a coarser step also snaps the
+          slider off the real value — at step 0.1 a 0.35mm relief showed 0.4 on
+          the slider and the number box failed HTML validation. */}
       <Section title="Relief" defaultOpen>
         <Field label="Min thickness (lightest)">
-          <NumberInput value={model.minThickness} min={0.3} max={3} step={0.1} unit="mm"
+          <NumberInput value={model.minThickness} min={0.3} max={3} step={0.01} unit="mm"
             onChange={(v) => patch({ minThickness: v })} />
         </Field>
         <Field label="Max thickness (darkest)">
-          <NumberInput value={model.maxThickness} min={1} max={8} step={0.1} unit="mm"
+          <NumberInput value={model.maxThickness} min={1} max={8} step={0.01} unit="mm"
             onChange={(v) => patch({ maxThickness: v })} />
         </Field>
         <Field label="Detail (sample size)">
@@ -1347,7 +1351,7 @@ function FanControls({
         </Field>
         <ToneControl value={model.tone} onChange={(v) => patch({ tone: v })} />
         <Field label="Slicer layer height">
-          <NumberInput value={model.layerHeight} min={0.04} max={0.4} step={0.02} unit="mm"
+          <NumberInput value={model.layerHeight} min={0.04} max={0.4} step={0.01} unit="mm"
             onChange={(v) => patch({ layerHeight: v })} />
         </Field>
         <Toggle label="Dither (smooth gradients)" checked={model.dither}
