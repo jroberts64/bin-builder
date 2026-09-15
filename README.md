@@ -45,6 +45,9 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     small bottom flat so the disc stands on the bed.
   - **Relief range** — min/max thickness (0.8–3mm classic) and a detail
     (sample size) control.
+  - **Border** — a rim of solid full-thickness material around the outline, with
+    the picture starting inside it. Frames the panel and stops the edge feathering
+    away to nothing; 0 turns it off.
   - **Tone correction** — light through plastic falls off *exponentially* with
     thickness, so a straight thickness ramp doesn't print as a straight
     brightness ramp: it crushes the shadows together and flattens the midtones,
@@ -59,9 +62,9 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     tone and finer vertical detail, but a tall thin print that wants a brim).
     The preview always shows the chosen orientation.
   - **Dithering** (flat only) — printed flat, brightness is the layer stack, so a
-    0.8–3mm range at 0.2mm layers is only 12 grey levels and smooth gradients
-    band into contour lines. Dithering quantises each sample to the nearest
-    printable layer and diffuses the rounding error into its neighbours
+    0.8–3mm range is 23 grey levels at 0.1mm layers and only 12 at 0.2mm, and
+    smooth gradients band into contour lines. Dithering quantises each sample to
+    the nearest printable layer and diffuses the rounding error into its neighbours
     (Floyd–Steinberg, serpentine scan), so local averages still track the photo
     — halftone printing applied to height. Tell it your slicer's layer height.
     The preview looks grainy up close; backlit, it reads smooth.
@@ -87,13 +90,26 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     also the gap between blades, so it tracks the relief automatically — a
     thinner eye would let a blade's picture jam into the back of the next one and
     the fan wouldn't fold. So **the relief range alone decides how thick a blade
-    is**; thin the range to thin the blade (contrast is the ratio of min to max,
-    not the difference, so scaling both down keeps the picture). There's an
-    override if you want a deliberately thicker eye for strength.
-  - **Overlap** — blades have to overlap to fold, and backlight crosses the whole
-    stack, so the inner fan always reads darker; the picture still covers the
-    whole blade so it works however far the fan is opened (or leave that inner
-    zone deliberately plain).
+    is** — but thinning it costs picture. Light falls off exponentially with
+    thickness, so what the image can show is set by the *gap* between min and max,
+    not their ratio: 0.6–1.8mm and 0.3–0.9mm are both exactly 3×, but print at
+    3.5:1 and 1.9:1 between lightest and darkest — half the contrast for half the
+    blade. There's an override if you want a deliberately thicker eye for strength.
+  - **Overlap and gaps** — blades tile the open fan when their width, length,
+    count and open angle agree; open it wider than they reach and wedge-shaped
+    gaps appear between them, narrower and they bury each other's picture. The
+    controls say what angle the blades meet at so you can match them. Where they
+    do overlap, backlight crosses the whole stack and that part reads darker; the
+    picture still covers the whole blade, so it works however far the fan is
+    opened (or leave that inner zone deliberately plain).
+  - **Border** — a rim of solid full-thickness material around each blade, so the
+    picture starts inside it. It stiffens a blade whose highlights may be a couple
+    of layers thick, keeps the edge from feathering to nothing, and frames each
+    blade — backlit it reads as a dark outline. 0 turns it off.
+  - **Composition template** — a downloadable mask of where the blades actually
+    fall, at the fan's own aspect ratio, so you can lay a picture out before
+    uploading it. Only about 60% of the fan's bounding box is live picture: the
+    bottom corners and the hub carry none.
   - **Relief** — the same min/max thickness, detail and layer-step **dithering**
     as the panel. The sample budget is shared across the blades, so adding blades
     coarsens detail rather than building a mesh too heavy to slice.
@@ -103,6 +119,11 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     thread axis, since that's the only way threads print cleanly. Everything is
     already oriented — don't rotate anything in the slicer. 3MF keeps every part
     as a separate object; the STL is the whole plate as one mesh.
+  - **Plate size** — the default fan is a full-size 262mm one, and eleven 133mm
+    blades do not fit a 256mm bed in one go: the layout is 183 × 283mm. Either
+    print it in two batches (a single row is 183 × 142mm and fits comfortably) or
+    shorten the blades. The dimensions readout shows the layout size in the
+    **print layout** view.
 - **Gridfinity toggle** — switch the Gridfinity foot, baseplate clearance and
   magnet/screw sockets on or off. Off = a plain flat-bottomed tray. Independent
   of how the bin is sized.
@@ -121,7 +142,9 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
 - **Save / load** — named designs in the browser (localStorage), auto-save of the
   working design across reloads, `.json` export/import, and shareable `?d=` links
 - **Export** — **watertight** binary STL and a valid 3MF package (Z-up, millimetres),
-  plus a **STEP** file for CAD
+  plus a **STEP** file for CAD (bins, boxes and Skadis holders; lithophane panels
+  and fans are STL/3MF only — a faceted B-rep of a 200k-triangle relief would be
+  enormous and useless in CAD)
 
 > **Watertight output:** geometry is built with the [Manifold](https://github.com/elalish/manifold)
 > CSG kernel, which guarantees manifold meshes (every edge shared by exactly two
@@ -210,6 +233,10 @@ For a second project in the same AWS account, deploy `github-oidc.yaml` with
 | `src/model/box.ts` | `BoxModel` + `buildBox`: sliding-lid and print-in-place hinged-lid boxes (two meshes) |
 | `src/model/texture.ts` | Box surface textures (lid top + walls): pattern solids, print-rule constants, one boolean per face |
 | `src/model/skadis.ts` | `SkadisModel` + `buildSkadis`: pegboard holder — tapered rect/round container, front/side opening, open bottom, back hooks (one mesh) |
+| `src/model/relief.ts` | Shared image-relief primitives (panel + fan): image decode cache, Beer–Lambert tone curve, heightfield mesh, layer-step dithering |
+| `src/model/litho.ts` | `LithoModel` + `buildLitho`: lithophane panel — shape, border rim, hanging hole, flat/standing placement |
+| `src/model/fan.ts` | `FanModel` + `buildFan`: lithophane fan — blade silhouette, the photo-across-the-open-fan mapping, border rim, pivot hardware, plate layout |
+| `src/model/thread.ts` | Printable helical screw threads for the fan's pivot post and screw |
 | `src/model/csg.ts` | Manifold (WASM) add/subtract wrappers, async `initCSG()`, THREE↔Manifold conversion, vertex-weld helper |
 | `src/model/export.ts` | STL exporter + dependency-free 3MF (ZIP/OPC) and faceted-STEP writers |
 | `src/model/serialize.ts` | Versioned (de)serialization + input validation; `.json` and share-URL encoding. Single trusted-input boundary. |
@@ -239,5 +266,7 @@ stays responsive.
 
 - **Per-compartment features** — scoop/label are global today; make them
   selectable per compartment.
-- **More** — baseplate generator, design save/load, custom corner radius and
-  foot-profile controls, magnet/screw size presets.
+- **Multi-plate fan export** — a full-size fan needs two plates; split the
+  layout per row and emit one file each.
+- **More** — baseplate generator, custom corner radius and foot-profile
+  controls, magnet/screw size presets.
