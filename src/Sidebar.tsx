@@ -1016,6 +1016,16 @@ function LithoControls({
           <NumberInput value={model.maxThickness} min={1} max={8} step={0.01} unit="mm"
             onChange={(v) => patch({ maxThickness: v })} />
         </Field>
+        <Field label="Border">
+          <NumberInput value={model.borderWidth} min={0} max={10} step={0.1} unit="mm"
+            onChange={(v) => patch({ borderWidth: v })} />
+        </Field>
+        <p className="hint">
+          The border is a rim of solid {fmtNum(model.maxThickness)} mm around the outline, with the
+          picture starting inside it. It stiffens the edge — highlights can be only a layer or two
+          thick, which is fragile left bare — and it frames the picture: at full thickness it reads
+          as a dark outline when backlit. 0 turns it off and lets the picture run to the edge.
+        </p>
         <Field label="Detail (sample size)">
           <NumberInput value={model.pitch} min={0.2} max={1} step={0.05} unit="mm"
             onChange={(v) => patch({ pitch: v })} />
@@ -1345,6 +1355,16 @@ function FanControls({
           <NumberInput value={model.maxThickness} min={1} max={8} step={0.01} unit="mm"
             onChange={(v) => patch({ maxThickness: v })} />
         </Field>
+        <Field label="Border">
+          <NumberInput value={model.borderWidth} min={0} max={10} step={0.1} unit="mm"
+            onChange={(v) => patch({ borderWidth: v })} />
+        </Field>
+        <p className="hint">
+          The border is a rim of solid {fmtNum(model.maxThickness)} mm around the outline, with the
+          picture starting inside it. It stiffens the edge — highlights can be only a layer or two
+          thick, which is fragile left bare — and it frames the picture: at full thickness it reads
+          as a dark outline when backlit. 0 turns it off and lets the picture run to the edge.
+        </p>
         <Field label="Detail (sample size)">
           <NumberInput value={model.pitch} min={0.2} max={1} step={0.05} unit="mm"
             onChange={(v) => patch({ pitch: v })} />

@@ -68,6 +68,7 @@ export interface FanModel {
   invert: boolean // flip light/dark
   tone: number // %, Beer–Lambert tone correction (0 = the raw linear ramp)
   clearOverlap: boolean // leave the inner zone where blades overlap flat instead of relieved
+  borderWidth: number // mm, rim of solid maxThickness around the blade. 0 = off
   imageZoom: number // %, 100 = the picture just covers the open fan
   imageOffsetX: number // mm, move the picture across the fan
   imageOffsetY: number // mm, move the picture up/down the fan
@@ -124,6 +125,15 @@ export function defaultFan(): FanModel {
     invert: false,
     tone: 100,
     clearOverlap: false,
+    // A rim of full-thickness material around the outline. Measured off the
+    // reference fan, which runs ~1.2mm of solid maxThickness around every blade
+    // before the relief starts (92-100% of cells within 1.05mm of the edge are
+    // at max, falling to the picture's own 40% dark fraction by 1.35mm). It is
+    // structural first: that fan's relief bottoms out at ONE printed layer, and
+    // a rim is what keeps such a blade from being a floppy membrane with a
+    // feathered, tear-prone edge. It frames the picture as a side effect --
+    // at maxThickness it reads dark when backlit.
+    borderWidth: 1.2,
     imageZoom: 100,
     imageOffsetX: 0,
     imageOffsetY: 0,
@@ -170,6 +180,9 @@ const BLADE_SWING_GAP = 0.2
 // Material left around the pivot hole in the blade eye. This is what gives the
 // blade its bulbous eye once the hole is sized for a printed screw.
 const HUB_RING = 3
+// mm over which the solid border ramps into the relief, so the rim is not a
+// cliff the picture falls off.
+const BORDER_BLEND = 0.4
 // Print layout: gap between blades, and the width to wrap the row at (blades
 // past this go to a second row, which keeps a 9-blade fan on one plate).
 const LAYOUT_GAP = 3
@@ -397,6 +410,22 @@ function halfWidthAt(p: BladeProfile, y: number): number {
 function silhouetteHalfWidth(p: BladeProfile, y: number): number {
   if (y < 0) return Math.sqrt(Math.max(0, p.r0 * p.r0 - y * y))
   return halfWidthAt(p, y)
+}
+
+// Distance in from the blade's silhouette, for the border rim.
+//
+// The outline is a 1-D half-width profile, so the lateral gap has to be divided
+// by the profile's own slope to become a true PERPENDICULAR distance. Without
+// that correction the rim pinches to nothing wherever the outline runs steeply
+// — which is the tip and the waist, exactly where a thin edge is most fragile.
+function edgeInset(p: BladeProfile, x: number, y: number): number {
+  if (y <= 0) return p.r0 - Math.hypot(x, y) // the round root cap below the pivot
+  const h = 0.25
+  const ya = Math.max(0, y - h)
+  const yb = Math.min(p.L, y + h)
+  const slope = yb > ya ? (halfWidthAt(p, yb) - halfWidthAt(p, ya)) / (yb - ya) : 0
+  const lateral = (halfWidthAt(p, y) - Math.abs(x)) / Math.hypot(1, slope)
+  return Math.min(lateral, p.L - y) // ...and the tip end
 }
 
 // The y values the outline is sampled at: uniform along the blade, plus extra
@@ -789,6 +818,7 @@ export function buildFan(m: FanModel): BuiltFan {
   const hubT = hubPlateThickness(m) // the eye plate — also the blade spacing
   const frame = fanFrame(m)
   const sample = fanSampler(m, frame)
+  const bw = m.borderWidth
   const rStart = reliefStartRadius(m)
 
   // Grid extent: the blade's own bounding box plus the trim overshoot.
@@ -822,7 +852,17 @@ export function buildFan(m: FanModel): BuiltFan {
     const zRaw = (x: number, y: number): number => {
       const r = Math.hypot(x, y)
       if (r <= rStart) return hubT
-      const t = sample(x * ca - y * sa, x * sa + y * ca)
+      let t = sample(x * ca - y * sa, x * sa + y * ca)
+      if (bw > 0) {
+        // Solid rim around the outline, ramped into the picture. Cells beyond
+        // the outline (the trim overshoot) come out at maxT too, so the cut
+        // passes through full-thickness material and leaves a clean edge.
+        const d = edgeInset(p, x, y)
+        if (d < bw + BORDER_BLEND) {
+          const u = Math.max(0, Math.min(1, (d - bw) / BORDER_BLEND))
+          t = maxT + (t - maxT) * (u * u * (3 - 2 * u))
+        }
+      }
       const f = Math.min(1, (r - rStart) / HUB_BLEND)
       return hubT + (t - hubT) * f
     }
@@ -840,7 +880,16 @@ export function buildFan(m: FanModel): BuiltFan {
       // The hub zone is re-flattened after dithering: error diffusing in from
       // the relief boundary would otherwise leave a layer of speckle on the
       // faces the blades pivot against.
-      if (d) zAt = (x, y, k, j) => (Math.hypot(x, y) <= rStart ? hubT : d[j * nx + k])
+      // The rim is re-flattened after dithering for the same reason as the hub:
+      // error diffusing in from the relief boundary would speckle a surface
+      // that is meant to be solid, and the rim is structure, not picture.
+      if (d)
+        zAt = (x, y, k, j) =>
+          Math.hypot(x, y) <= rStart
+            ? hubT
+            : bw > 0 && edgeInset(p, x, y) <= bw
+              ? maxT
+              : d[j * nx + k]
     }
 
     // Trim the grid to the blade outline (and open the pivot hole). NO weld()

@@ -55,6 +55,7 @@ export interface LithoModel {
   pitch: number // mm per relief sample (lower = finer detail, bigger mesh)
   invert: boolean // flip light/dark (e.g. for a negative)
   tone: number // %, Beer–Lambert tone correction (0 = the raw linear ramp)
+  borderWidth: number // mm, rim of solid maxThickness around the panel. 0 = off
   mountHole: boolean // through-hole near the top edge for hanging
   mountHoleDiameter: number // mm
   orientation: LithoOrientation // how it's placed for preview + export
@@ -74,6 +75,11 @@ export function defaultLitho(): LithoModel {
     pitch: 0.3,
     invert: false,
     tone: 100,
+    // Same rim as the fan blades (see fan.ts): solid maxThickness around the
+    // outline before the relief starts. On a panel it is less about stiffness
+    // than about giving the picture a frame and the trimmed edge something
+    // solid to be — but a panel edge at minThickness is fragile too.
+    borderWidth: 1.2,
     mountHole: false,
     mountHoleDiameter: 4,
     orientation: 'flat',
@@ -206,6 +212,27 @@ function outlinePrism(m: LithoModel, zTop: number): THREE.BufferGeometry {
 
 // --- main build --------------------------------------------------------------
 
+// mm over which the solid border ramps into the relief.
+const BORDER_BLEND = 0.4
+
+// Distance in from the panel's outline. Round panels are a circle with a chord
+// cut off the bottom, so the flat is a second edge to stay clear of; rect
+// panels use the standard rounded-box signed distance, which degenerates
+// correctly to a sharp rectangle at cornerRadius 0.
+function edgeInset(m: LithoModel, panelH: number, x: number, y: number): number {
+  if (m.shape === 'round') {
+    const R = m.width / 2
+    const cy = R - ROUND_FLAT // the ideal circle dips ROUND_FLAT below y=0
+    return Math.min(R - Math.hypot(x, y - cy), y)
+  }
+  const r = Math.min(m.cornerRadius, m.width / 2, panelH / 2)
+  const qx = Math.abs(x) - (m.width / 2 - r)
+  const qy = Math.abs(y - panelH / 2) - (panelH / 2 - r)
+  const outside = Math.hypot(Math.max(qx, 0), Math.max(qy, 0))
+  const inside = Math.min(Math.max(qx, qy), 0)
+  return r - (outside + inside) // positive inside the panel
+}
+
 export function buildLitho(m: LithoModel): BuiltLitho {
   const round = m.shape === 'round'
   const maxT = effMaxThickness(m)
@@ -228,9 +255,20 @@ export function buildLitho(m: LithoModel): BuiltLitho {
   // box (the ideal circle dips ROUND_FLAT below y=0) so the crop stays centred
   // on the circle, not on the flattened visible part.
   const thick = thicknessSampler(m, m.width, round ? m.width : m.height)
-  const zRaw = round
+  const pic = round
     ? (x: number, y: number) => thick((x + m.width / 2) / m.width, (y + ROUND_FLAT) / m.width)
     : (x: number, y: number) => thick((x + m.width / 2) / m.width, y / m.height)
+  const bw = m.borderWidth
+  const zRaw =
+    bw > 0
+      ? (x: number, y: number) => {
+          const t = pic(x, y)
+          const d = edgeInset(m, panelH, x, y)
+          if (d >= bw + BORDER_BLEND) return t
+          const u = Math.max(0, Math.min(1, (d - bw) / BORDER_BLEND))
+          return maxT + (t - maxT) * (u * u * (3 - 2 * u))
+        }
+      : pic
 
   // Dithering only makes sense FLAT, where the relief is the layer stack. Printed
   // standing, thickness is drawn horizontally by varying wall width — there are no
@@ -245,7 +283,11 @@ export function buildLitho(m: LithoModel): BuiltLitho {
       for (let i = 0; i < nx; i++) raw[j * nx + i] = zRaw(gx0 + i * dx, gy0 + j * dy)
     }
     const dithered = ditherGrid(nx, ny, raw, m.layerHeight, m.minThickness, maxT)
-    if (dithered) zAt = (_x, _y, i, j) => dithered[j * nx + i]
+    // The rim is re-flattened after dithering (as on a fan blade): diffused
+    // error would otherwise speckle a surface that is meant to be solid.
+    if (dithered)
+      zAt = (x, y, i, j) =>
+        bw > 0 && edgeInset(m, panelH, x, y) <= bw ? maxT : dithered[j * nx + i]
   }
 
   let geo = heightfieldMesh(gx0, gy0, gw, gh, nx, ny, zAt)
