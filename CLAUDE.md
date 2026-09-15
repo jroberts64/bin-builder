@@ -57,6 +57,7 @@ Strong way to verify geometry/exports without a human: drive the running dev app
 | `src/SaveMenu.tsx` | Save/load/delete designs, import/export `.json`, copy share link. Dropdown from the header. |
 | `src/App.tsx` | Top-level state (`Design`, name, build-plate toggle, fit signal) + layout. Resolves the initial design and autosaves. |
 | `src/styles.css` | All styling. Dark theme; CSS variables at `:root`. |
+| `public/fan-template.png` | Composition guide for fan photos, linked from the Sidebar: 1400×763 (1.835:1), white where the blades fall, grey for the flat hub, black for the dead corners. **Generated, not drawn** — rasterise each blade of `buildFan()` rotated by its own `bladeAngle` into `fanFrame()`'s box. It is specific to the DEFAULT fan, so redraw it whenever the default blade count, spread, length or width changes, or it quietly lies. |
 
 State flows one way: `App` owns a single `Design` (`{ type, bin, box, skadis, litho, fan }`), passes it + per-type setters to `Sidebar`, and the whole `Design` to `Viewport`. There is no global store; don't add one for this size of app.
 

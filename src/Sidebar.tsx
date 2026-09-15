@@ -1226,6 +1226,15 @@ function FanControls({
           it. 100% zoom just covers the fan{model.imageZoom < 100 && ', so at this zoom the blades outside the picture come out at their thinnest (a bright margin)'}
           . Zoom in to crop to faces; move it to pick what lands on the blades.
         </p>
+        <p className="hint">
+          Making a picture for the fan?{' '}
+          <a href="/fan-template.png" download>
+            Download the layout template
+          </a>{' '}
+          — 1400×763 (1.835:1), white where the blades actually fall. The bottom corners and the
+          hub carry no picture at all, so keep the subject in the arc. Drawn for the default fan,
+          so it drifts if you change blade count, spread or length.
+        </p>
       </Section>
 
       <Section title="Fan" defaultOpen>
