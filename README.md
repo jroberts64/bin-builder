@@ -45,6 +45,13 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     small bottom flat so the disc stands on the bed.
   - **Relief range** — min/max thickness (0.8–3mm classic) and a detail
     (sample size) control.
+  - **Tone correction** — light through plastic falls off *exponentially* with
+    thickness, so a straight thickness ramp doesn't print as a straight
+    brightness ramp: it crushes the shadows together and flattens the midtones,
+    which is the usual reason a lithophane looks muddy. This inverts the physics
+    (Beer–Lambert) and picks the thickness whose transmission lands where the
+    photo wants it. 100% is matched to white PLA; raise it for denser filament,
+    and 0% gives back the raw linear ramp.
   - **Hanging hole** — optional through-hole near the top edge.
   - **Print orientation** — **flat** (default: on its back, relief up, already
     oriented so you don't rotate it in the slicer — fast, no brim, tone

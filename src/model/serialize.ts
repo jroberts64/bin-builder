@@ -199,7 +199,7 @@ const LITHO_ORIENTATIONS: LithoOrientation[] = ['flat', 'standing']
 function coerceReliefImage(value: unknown): string | null {
   if (typeof value !== 'string') return null
   if (!value.startsWith('data:image/')) return null
-  if (value.length > 2_000_000) return null
+  if (value.length > 3_000_000) return null
   return value
 }
 
@@ -217,6 +217,7 @@ export function coerceLitho(raw: unknown): LithoModel {
     maxThickness: num(m.maxThickness, d.maxThickness, 1, 8),
     pitch: num(m.pitch, d.pitch, 0.2, 1),
     invert: bool(m.invert, d.invert),
+    tone: num(m.tone, d.tone, 0, 300),
     mountHole: bool(m.mountHole, d.mountHole),
     mountHoleDiameter: num(m.mountHoleDiameter, d.mountHoleDiameter, 2, 12),
     orientation: oneOf(m.orientation, LITHO_ORIENTATIONS, d.orientation),
@@ -264,6 +265,7 @@ export function coerceFan(raw: unknown): FanModel {
     ),
     pitch: num(m.pitch, d.pitch, 0.2, 1),
     invert: bool(m.invert, d.invert),
+    tone: num(m.tone, d.tone, 0, 300),
     clearOverlap: bool(m.clearOverlap, d.clearOverlap),
     imageZoom: num(m.imageZoom, d.imageZoom, 25, 400),
     imageOffsetX: num(m.imageOffsetX, d.imageOffsetX, -300, 300),

@@ -1,6 +1,15 @@
 import * as THREE from 'three'
 import { csgAdd, csgIntersect, csgSubtract, weld } from './csg'
-import { clamp, clamp01, ditherGrid, getGray, heightfieldMesh, prepareImage, sampleLum } from './relief'
+import {
+  clamp,
+  clamp01,
+  ditherGrid,
+  getGray,
+  heightfieldMesh,
+  prepareImage,
+  sampleLum,
+  thicknessForLuminance,
+} from './relief'
 import { THREAD, ThreadSpec, threadSpec, threadedRod } from './thread'
 
 // Lithophane fan: a hand fan whose blades are lithophane panels pivoting on a
@@ -57,6 +66,7 @@ export interface FanModel {
   pivotDiameter: number // mm, the hole through the blade eye
   pitch: number // mm per relief sample
   invert: boolean // flip light/dark
+  tone: number // %, Beer–Lambert tone correction (0 = the raw linear ramp)
   clearOverlap: boolean // leave the inner zone where blades overlap flat instead of relieved
   imageZoom: number // %, 100 = the picture just covers the open fan
   imageOffsetX: number // mm, move the picture across the fan
@@ -77,12 +87,13 @@ export function defaultFan(): FanModel {
     neckLength: 22,
     tip: 'petal',
     minThickness: 0.6,
-    maxThickness: 1.6,
+    maxThickness: 1.8,
     hubThickness: 0, // auto: track the relief
     pivotStyle: 'screw',
     pivotDiameter: 8,
     pitch: 0.35,
     invert: false,
+    tone: 100,
     clearOverlap: false,
     imageZoom: 100,
     imageOffsetX: 0,
@@ -102,11 +113,17 @@ export interface BuiltFan {
 // The relief grid overshoots the blade outline by this much before the CSG trim,
 // so the trim is a clean cut and never a coplanar graze of the grid's own walls.
 const MARGIN = 1.5
-// Total relief cells across ALL blades. A fan is many panels, so the budget is
-// shared: a 12-blade fan samples a little coarser rather than building a mesh too
-// heavy to preview or slice. At the default size this lands near 0.4mm, which is
-// about one extrusion width anyway.
-const MAX_CELLS = 150_000
+// Total relief cells across ALL blades, so blade count trades against detail
+// rather than building a mesh too heavy to preview or slice.
+//
+// It is shared, but it is NOT the panel's budget: a lithophane panel gets 160k
+// cells to itself, and splitting that across nine blades left each one sampling
+// about a third as densely per mm² as a panel (~0.42mm pitch). That is roughly
+// one extrusion width, so it barely costs detail in the picture plane — but it
+// does coarsen the dither halftone, which is what carries tone between the few
+// layer steps a thin blade has. At this budget the default fan lands near 0.3mm,
+// matching the panel, for ~2x the triangles.
+const MAX_CELLS = 300_000
 // mm over which thickness ramps from the flat hub zone into the relief, so there
 // is no cliff between them.
 const HUB_BLEND = 2
@@ -584,8 +601,7 @@ function fanSampler(m: FanModel, frame: FanFrame): (X: number, Y: number) => num
     const py = gray.h / 2 - (Y - frame.cy - m.imageOffsetY) / mmPerPx // image row 0 = top
     const outside = px < -0.5 || py < -0.5 || px > gray.w - 0.5 || py > gray.h - 0.5
     const l = outside ? 1 : sampleLum(gray, px, py)
-    const dark = m.invert ? l : 1 - l
-    return minT + (maxT - minT) * dark
+    return thicknessForLuminance(m.invert ? 1 - l : l, minT, maxT, m.tone)
   }
 }
 

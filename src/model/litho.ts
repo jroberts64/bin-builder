@@ -1,6 +1,15 @@
 import * as THREE from 'three'
 import { csgIntersect, csgSubtract, weld } from './csg'
-import { clamp, clamp01, ditherGrid, getGray, heightfieldMesh, prepareImage, sampleLum } from './relief'
+import {
+  clamp,
+  clamp01,
+  ditherGrid,
+  getGray,
+  heightfieldMesh,
+  prepareImage,
+  sampleLum,
+  thicknessForLuminance,
+} from './relief'
 
 // Lithophane: an image embossed as varying thickness in a thin panel, so it
 // reveals the picture when backlit. A SINGLE watertight mesh (like the bin and
@@ -45,6 +54,7 @@ export interface LithoModel {
   maxThickness: number // mm, thickness of the darkest areas
   pitch: number // mm per relief sample (lower = finer detail, bigger mesh)
   invert: boolean // flip light/dark (e.g. for a negative)
+  tone: number // %, Beer–Lambert tone correction (0 = the raw linear ramp)
   mountHole: boolean // through-hole near the top edge for hanging
   mountHoleDiameter: number // mm
   orientation: LithoOrientation // how it's placed for preview + export
@@ -63,6 +73,7 @@ export function defaultLitho(): LithoModel {
     maxThickness: 3,
     pitch: 0.3,
     invert: false,
+    tone: 100,
     mountHole: false,
     mountHoleDiameter: 4,
     orientation: 'flat',
@@ -145,8 +156,7 @@ function thicknessSampler(m: LithoModel, panelW: number, panelH: number): (u: nu
     const px = clamp01(0.5 + (u - 0.5) * su) * (w - 1)
     const py = clamp01(1 - (0.5 + (v - 0.5) * sv)) * (h - 1) // image row 0 = top
     const l = sampleLum(gray, px, py)
-    const dark = m.invert ? l : 1 - l
-    return minT + (maxT - minT) * dark
+    return thicknessForLuminance(m.invert ? 1 - l : l, minT, maxT, m.tone)
   }
 }
 

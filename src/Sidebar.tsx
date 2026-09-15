@@ -1012,6 +1012,7 @@ function LithoControls({
           <NumberInput value={model.pitch} min={0.2} max={1} step={0.05} unit="mm"
             onChange={(v) => patch({ pitch: v })} />
         </Field>
+        <ToneControl value={model.tone} onChange={(v) => patch({ tone: v })} />
         <p className="hint">
           0.8 / 3.0 mm is the classic range for translucent filament. Smaller samples mean finer
           detail but a heavier model; very large panels cap the effective detail automatically.
@@ -1328,6 +1329,7 @@ function FanControls({
           <NumberInput value={model.pitch} min={0.2} max={1} step={0.05} unit="mm"
             onChange={(v) => patch({ pitch: v })} />
         </Field>
+        <ToneControl value={model.tone} onChange={(v) => patch({ tone: v })} />
         <Field label="Slicer layer height">
           <NumberInput value={model.layerHeight} min={0.04} max={0.4} step={0.02} unit="mm"
             onChange={(v) => patch({ layerHeight: v })} />
@@ -1346,7 +1348,7 @@ function FanControls({
           {model.dither
             ? 'Dithering picks the nearest printable level per sample and pushes the rounding error into its neighbours, so local averages still track the photo. The preview looks grainy up close, which is the point: backlit, the eye averages it into smooth tone.'
             : 'Without dithering, every gradient crossing a level boundary prints as a hard contour line.'}{' '}
-          The sample budget is shared across all {n} blades, so adding blades coarsens the detail.
+          {`Layer height is the strongest lever you have here — halving it doubles the levels for no extra thickness, and a ${fmtNum(plate)} mm blade is only ${Math.ceil(plate / model.layerHeight)} layers, so it costs very little time. Reach for that before adding thickness. The sample budget is shared across all ${n} blades, so adding blades coarsens the detail.`}
         </p>
       </Section>
 
@@ -1364,6 +1366,38 @@ function FanControls({
           </p>
         )}
       </Section>
+    </>
+  )
+}
+
+// Tone correction, shared by the lithophane panel and the fan. Both map the
+// photo's luminance to thickness through the same curve, so the control and its
+// explanation live in one place.
+function ToneControl({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <>
+      <div className="seg-head">
+        <span>Tone correction</span>
+        <InfoDot
+          text={
+            <>
+              Light through plastic falls off <b>exponentially</b> with thickness, so a straight
+              thickness ramp does not print as a straight brightness ramp — it crushes the shadows
+              together and flattens the midtones. This bends the curve the other way, picking the
+              thickness whose transmission lands where the photo wants it.<br />
+              <b>0%</b> — no correction: raw linear thickness.<br />
+              <b>100%</b> — matched to white PLA.<br />
+              <b>More</b> — for denser or darker filament, or if the print still looks flat.
+            </>
+          }
+        />
+      </div>
+      <NumberInput value={value} min={0} max={300} step={5} unit="%" onChange={onChange} />
+      <p className="hint">
+        {value === 0
+          ? 'Off — thickness ramps linearly with brightness, which prints muddy: most of the range is spent on shadows that are already nearly opaque.'
+          : `Compensates for light falling off exponentially through the material. 100% suits white PLA; raise it if prints still look flat, lower it if highlights blow out. Set 0 for the old linear ramp.`}
+      </p>
     </>
   )
 }

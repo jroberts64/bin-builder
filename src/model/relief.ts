@@ -89,14 +89,18 @@ export function sampleLum(g: GrayImage, px: number, py: number): number {
 }
 
 // Downscale an uploaded image file to a compact data URL for embedding in the
-// design (longest side ≤ 800px — finer than any printable relief pitch — JPEG
-// on a white underlay). Returns the pixel size too so the caller can match the
-// panel aspect to the image.
+// design (JPEG on a white underlay). Returns the pixel size too so the caller
+// can match the panel aspect to the image.
+//
+// The cap is 1400px because a FAN spreads one photo across the whole open
+// arc — ~200mm at a ~0.3mm pitch is ~650 samples wide, and cropping in with
+// `imageZoom` eats into that fast, so the old 800px cap was the limit on detail
+// rather than the print was. A single panel never needs this much.
 export async function imageFileToDataURL(
   file: File,
 ): Promise<{ dataUrl: string; width: number; height: number }> {
   const bmp = await createImageBitmap(file)
-  const scale = Math.min(1, 800 / Math.max(bmp.width, bmp.height))
+  const scale = Math.min(1, 1400 / Math.max(bmp.width, bmp.height))
   const w = Math.max(1, Math.round(bmp.width * scale))
   const h = Math.max(1, Math.round(bmp.height * scale))
   const canvas = document.createElement('canvas')
@@ -108,6 +112,49 @@ export async function imageFileToDataURL(
   ctx.drawImage(bmp, 0, 0, w, h)
   bmp.close()
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.85), width: w, height: h }
+}
+
+// --- tone curve --------------------------------------------------------------
+
+// Attenuation of white PLA in mm⁻¹, the reference `tone: 100` corresponds to.
+// Derived from the usual observation that a lithophane's 0.8mm highlights pass
+// roughly ten times the light of its 3mm shadows: μ = ln(10)/2.2 ≈ 1.05.
+export const TONE_REF_MU = 1.05
+
+// The thickness that prints as luminance `l` (0 = black, 1 = white) when backlit.
+//
+// The obvious mapping is linear — thickness = min + (max−min)·(1−l) — and that
+// is what this used to do. It is wrong, and it is the main reason a lithophane
+// comes out muddy: light through plastic follows **Beer–Lambert**, transmission
+// = e^(−μt), so a straight thickness ramp does NOT print as a straight
+// brightness ramp. Transmission falls off fastest where the part is thinnest, so
+// a linear ramp spends most of its thickness budget on shadows that are already
+// nearly opaque, crushes the darks together, and leaves midtones and highlights
+// flattened into each other.
+//
+// Inverting the physics instead: pick the thickness whose TRANSMISSION lands
+// where the picture wants it, so printed brightness tracks the photo.
+//
+//   t(l) = −ln( T(max) + l·( T(min) − T(max) ) ) / μ ,  T(x) = e^(−μx)
+//
+// `tone` is that μ as a percentage of TONE_REF_MU, so it is one dial: 0 gives
+// back the old linear ramp exactly (the formula degenerates to it as μ→0, which
+// is why the small-μ branch below is a guard against 0/0, not a different
+// model), 100 suits white PLA, and denser or darker filament wants more.
+export function thicknessForLuminance(
+  l: number,
+  minT: number,
+  maxT: number,
+  tone: number,
+): number {
+  const lum = clamp01(l)
+  const span = maxT - minT
+  const mu = (tone / 100) * TONE_REF_MU
+  if (span <= 0) return minT
+  if (mu * span < 1e-3) return minT + span * (1 - lum) // linear, and the μ→0 limit
+  const hi = Math.exp(-mu * minT) // transmission through the thinnest areas
+  const lo = Math.exp(-mu * maxT) // ...and through the thickest
+  return clamp(-Math.log(lo + lum * (hi - lo)) / mu, minT, maxT)
 }
 
 // --- dithering --------------------------------------------------------------
