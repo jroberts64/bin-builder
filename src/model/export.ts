@@ -82,25 +82,27 @@ export function exportLitho3MF(model: LithoModel, meta?: string): Blob {
   return geometryToBlob3MF(lithoExportGeometry(model), meta)
 }
 
-// --- Lithophane fan: one blade per part, laid out on the plate. Like the litho
-// panel, a blade is modelled with its flat back on z=0 and the relief toward
-// +Z — already print space — so nothing is rotated here. No STEP, same reason.
+// --- Lithophane fan: one blade per part plus the two pivot parts, laid out on
+// the plate. Every part is modelled in its print pose already — blades on their
+// backs with the relief toward +Z, pivot parts standing on their thread axis —
+// so nothing is rotated here. No STEP, same reason as the litho panel.
 
 function fanExportGeometries(model: FanModel): THREE.BufferGeometry[] {
-  return placeFanForPrint(buildFan(model).blades, model)
+  const built = placeFanForPrint(buildFan(model), model)
+  return [...built.blades, ...built.hardware]
 }
 
 // A fan is many parts, but they are all printed together on one plate, and a
 // zip of a dozen near-identical .stl files would be worse than useless. So the
 // STL is the whole plate merged into one mesh — it slices as laid out, and the
-// blades are still separable in the slicer.
+// parts are still separable in the slicer.
 export function exportFanSTL(model: FanModel): Blob {
-  const blades = fanExportGeometries(model)
-  const combined = blades.length === 1 ? blades[0] : mergeGeometries(blades, false)!
+  const parts = fanExportGeometries(model)
+  const combined = parts.length === 1 ? parts[0] : mergeGeometries(parts, false)!
   return geometryToSTL(combined)
 }
 
-// 3MF keeps the blades as distinct objects, in their plate positions.
+// 3MF keeps every blade and pivot part as a distinct object, in plate position.
 export function exportFan3MF(model: FanModel, meta?: string): Blob {
   return geometriesToBlob3MF(fanExportGeometries(model), meta)
 }

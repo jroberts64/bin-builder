@@ -138,11 +138,13 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
           case 'fan': {
             // Either the fan opened out (so the picture across the blades is
             // readable) or the plate layout the export writes.
-            const blades = orientFanForPreview(buildFan(design.fan).blades, design.fan)
+            const fan = orientFanForPreview(buildFan(design.fan), design.fan)
             // Alternate shades so the blade stack stays legible when assembled.
-            blades.forEach((b, i) =>
+            fan.blades.forEach((b, i) =>
               group.add(new THREE.Mesh(b, mat(i % 2 ? 0x8ec5ff : 0x4a9eff))),
             )
+            // The pivot parts in a contrasting tone — they read as hardware.
+            fan.hardware.forEach((h) => group.add(new THREE.Mesh(h, mat(0xf0a24a))))
             break
           }
           default:

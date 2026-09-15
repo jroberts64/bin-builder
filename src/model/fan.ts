@@ -1,6 +1,7 @@
 import * as THREE from 'three'
-import { csgIntersect, csgSubtract, weld } from './csg'
+import { csgAdd, csgIntersect, csgSubtract, weld } from './csg'
 import { clamp, clamp01, ditherGrid, getGray, heightfieldMesh, prepareImage, sampleLum } from './relief'
+import { THREAD, ThreadSpec, threadSpec, threadedRod } from './thread'
 
 // Lithophane fan: a hand fan whose blades are lithophane panels pivoting on a
 // common hub, so one photograph spans the whole fan when it's opened. MANY
@@ -30,6 +31,13 @@ export type FanTip = 'petal' | 'point' | 'round'
 // exactly one sensible print pose (flat on its back, relief up).
 export type FanPreview = 'assembled' | 'flat'
 
+// How the blades are held together at the pivot.
+//   'screw' — a printed two-part barrel post + screw is generated and exported
+//             alongside the blades (see "the pivot screw" below). The blade hole
+//             is sized to the barrel, so it has a minimum (MIN_SCREW_PIVOT).
+//   'hole'  — just a hole; bring your own M3 screw, washer and nut.
+export type FanPivotStyle = 'screw' | 'hole'
+
 export interface FanModel {
   image: string | null // source photo as a data URL (persisted, never in share links)
   blades: number // how many blades pivot on the hub
@@ -41,8 +49,10 @@ export interface FanModel {
   tip: FanTip // blade tip silhouette
   minThickness: number // mm, thickness of the lightest areas
   maxThickness: number // mm, thickness of the darkest areas
-  hubThickness: number // mm, flat (untextured) thickness of the neck/pivot zone
-  pivotDiameter: number // mm, the hole the rivet/screw passes through
+  hubThickness: number // mm, flat thickness of the eye/neck zone — a LOWER BOUND;
+  // it also sets the blade spacing, so `hubPlateThickness` raises it to clear the relief
+  pivotStyle: FanPivotStyle // printed screw, or a plain hole for hardware
+  pivotDiameter: number // mm, the hole through the blade eye
   pitch: number // mm per relief sample
   invert: boolean // flip light/dark
   clearOverlap: boolean // leave the inner zone where blades overlap flat instead of relieved
@@ -65,9 +75,10 @@ export function defaultFan(): FanModel {
     neckLength: 22,
     tip: 'petal',
     minThickness: 0.8,
-    maxThickness: 2.4,
-    hubThickness: 1.6,
-    pivotDiameter: 3.2,
+    maxThickness: 2,
+    hubThickness: 2.4,
+    pivotStyle: 'screw',
+    pivotDiameter: 8,
     pitch: 0.35,
     invert: false,
     clearOverlap: false,
@@ -82,6 +93,7 @@ export function defaultFan(): FanModel {
 
 export interface BuiltFan {
   blades: THREE.BufferGeometry[]
+  hardware: THREE.BufferGeometry[] // [post, screw] with pivotStyle 'screw', else []
   size: { x: number; y: number; z: number }
 }
 
@@ -96,14 +108,38 @@ const MAX_CELLS = 150_000
 // mm over which thickness ramps from the flat hub zone into the relief, so there
 // is no cliff between them.
 const HUB_BLEND = 2
-// Preview-only separation between stacked blades: enough that one blade's relief
-// doesn't interpenetrate the next in the assembled render. The real stack at the
-// pivot is thinner — blades × hubThickness — because the neck zone is flat.
-const STACK_GAP = 0.2
+// Clearance between a blade's relief and the back of the next blade in the stack
+// (see `hubPlateThickness`).
+const BLADE_SWING_GAP = 0.3
+// Material left around the pivot hole in the blade eye. This is what gives the
+// blade its bulbous eye once the hole is sized for a printed screw.
+const HUB_RING = 3
 // Print layout: gap between blades, and the width to wrap the row at (blades
 // past this go to a second row, which keeps a 9-blade fan on one plate).
 const LAYOUT_GAP = 3
 const LAYOUT_MAX_W = 220
+
+// --- the pivot screw -------------------------------------------------------
+// A two-part barrel post, the printed equivalent of a Chicago screw: a flanged
+// post whose barrel threads the blade holes, and a screw that tightens into the
+// barrel's bore from the far side. The BARREL LENGTH sets the spacing, so the
+// screw bottoms out against the barrel's end face and never against the blades —
+// which is the whole point, because a fan has to keep turning. Tightening it
+// hard cannot seize the stack.
+const PIVOT_SLIP = 0.3 // barrel OD under the blade hole, so the blades turn on it
+const BARREL_WALL = 1.2 // material around the threaded bore
+const PIVOT_PLAY = 0.4 // barrel longer than the stack, so the blades stay loose
+const CAP_RING = 2.5 // how far the flange and head overhang the hole
+const FLANGE_T = 1.8
+const HEAD_T = 2.4
+const BORE_RUNOUT = 1.5 // bore deeper than the screw, so it seats on the barrel face
+const HEAD_FLUTES = 8 // scallops round the head rim, to finger-tighten
+
+// The blade hole can't shrink below this in 'screw' mode: the barrel has to fit
+// through it, the bore has to fit inside the barrel, and the thread in that bore
+// still has to be printable (THREAD.MIN_MAJOR). Enforced in `coerceFan` against
+// the resolved pivot style, and again by `effPivotDiameter`.
+export const MIN_SCREW_PIVOT = THREAD.MIN_MAJOR + 2 * BARREL_WALL + PIVOT_SLIP + 0.1
 
 // The image decode is async but buildFan is sync, so the decoded grayscale lives
 // in relief.ts's cache: await this before buildFan (Viewport and the export paths
@@ -114,10 +150,75 @@ function effMaxThickness(m: FanModel): number {
   return Math.max(m.maxThickness, m.minThickness + 0.2)
 }
 
-// The pivot hole has to leave a ring of material around it in the neck, so it is
-// capped by the neck width however large the model asks for.
-function effPivotDiameter(m: FanModel): number {
-  return clamp(m.pivotDiameter, 0, Math.max(0, m.neckWidth - 3))
+export function effPivotDiameter(m: FanModel): number {
+  return m.pivotStyle === 'screw' ? Math.max(m.pivotDiameter, MIN_SCREW_PIVOT) : m.pivotDiameter
+}
+
+// Diameter of the blade's EYE — the round end around the pivot hole. Derived,
+// not a control: the hole always has to keep `HUB_RING` of material around it,
+// and once the hole is sized for a printed screw that alone makes the eye wider
+// than the neck. Hence the shape a fan blade actually wants: a bulbous eye, a
+// pinched waist, then the flare out to the blade.
+export function hubDiameter(m: FanModel): number {
+  return Math.max(m.neckWidth, effPivotDiameter(m) + 2 * HUB_RING)
+}
+
+// Thickness of the flat eye/neck plate — and therefore the SPACING between
+// blades in the stack, since the blades sit eye-to-eye on the barrel.
+//
+// That makes it load-bearing, not cosmetic: blade i occupies z ∈ [i·p, i·p + t]
+// where p is this spacing, so anywhere two blades overlap (which is most of the
+// fan — see `overlapRadius`) the relief only clears the back of the next blade
+// if t ≤ p. The relief reaches `maxThickness`, so a thinner eye than that jams
+// the fan solid and it can't be folded. The model's `hubThickness` is therefore
+// a lower bound that gets raised to clear the relief plus a swing gap.
+export function hubPlateThickness(m: FanModel): number {
+  return Math.max(m.hubThickness, effMaxThickness(m) + BLADE_SWING_GAP)
+}
+
+export interface FanPivot {
+  pivotD: number
+  barrelOD: number
+  barrelLen: number
+  capD: number // flange and head diameter
+  flangeT: number
+  headT: number
+  threadLen: number // engagement length
+  boreDepth: number
+  thread: ThreadSpec
+  stackH: number
+  totalH: number // flange + barrel + head, i.e. the assembled hub height
+}
+
+// Resolve the printed pivot hardware, or null when the pivot is a plain hole.
+export function fanPivot(m: FanModel): FanPivot | null {
+  if (m.pivotStyle !== 'screw') return null
+  const pivotD = effPivotDiameter(m)
+  const barrelOD = pivotD - PIVOT_SLIP
+  const majorD = barrelOD - 2 * BARREL_WALL
+  if (majorD < THREAD.MIN_MAJOR) return null // unreachable: MIN_SCREW_PIVOT guarantees it
+  const thread = threadSpec(majorD)
+  const stackH = bladeCount(m) * hubPlateThickness(m)
+  const barrelLen = stackH + PIVOT_PLAY
+  // Only the top of the bore is threaded: a screw as long as the whole barrel
+  // would take a dozen turns to fit for no extra strength, since the head pulls
+  // against the barrel's end face right where the engagement is. The bore is
+  // allowed to reach down into the flange (leaving a floor), so a fan of two or
+  // three blades still gets what engagement its short barrel can offer.
+  const threadLen = clamp(majorD * 1.6, 1.5, FLANGE_T + barrelLen - BORE_RUNOUT - 0.8)
+  return {
+    pivotD,
+    barrelOD,
+    barrelLen,
+    capD: Math.max(barrelOD + 2, Math.min(hubDiameter(m) - 1, pivotD + 2 * CAP_RING)),
+    flangeT: FLANGE_T,
+    headT: HEAD_T,
+    threadLen,
+    boreDepth: threadLen + BORE_RUNOUT,
+    thread,
+    stackH,
+    totalH: FLANGE_T + barrelLen + HEAD_T,
+  }
 }
 
 export function bladeCount(m: FanModel): number {
@@ -168,8 +269,11 @@ function tipShape(tip: FanTip, s: number): number {
 interface BladeProfile {
   L: number // pivot centre to tip
   hw: number // half of the widest width
-  r0: number // root cap radius (half the neck width)
-  neck: number // the narrow neck runs from the pivot out to here
+  r0: number // eye radius (also the root cap radius)
+  eyeHold: number // the eye stays full width out to here
+  waistEnd: number // ...then pinches in to the neck by here
+  neckHW: number // half-width of the pinched neck
+  neck: number // the neck runs out to here
   flare: number // mm over which the neck widens to full width
   tipStart: number // where the tip section begins
   tip: FanTip
@@ -180,27 +284,39 @@ interface BladeProfile {
 // still produces a sane silhouette instead of a self-crossing one.
 function bladeProfile(m: FanModel): BladeProfile {
   const L = m.bladeLength
+  const r0 = hubDiameter(m) / 2
   const hw = Math.max(m.bladeWidth, m.neckWidth + 2) / 2
-  const r0 = m.neckWidth / 2
-  const neck = clamp(m.neckLength, r0 + 2, L * 0.6)
+  const neckHW = Math.min(m.neckWidth, hubDiameter(m)) / 2
+  // Hold the eye at full width briefly so it reads as a round boss rather than a
+  // cone, then pinch in over a distance proportional to the width given up.
+  const eyeHold = r0 * 0.25
+  const waistEnd = eyeHold + Math.max(1.5, (r0 - neckHW) * 1.8)
+  const neck = clamp(m.neckLength, waistEnd + 1, L * 0.6)
   const tipLen = Math.min(hw * TIP_LEN[m.tip], (L - neck) * 0.75)
   const tipStart = L - tipLen
   // Widen over a distance in proportion to how much width is gained, but never
   // past the start of the tip.
-  const flare = Math.min((hw - r0) * 1.6 + 2, (tipStart - neck) * 0.8)
-  return { L, hw, r0, neck, flare, tipStart, tip: m.tip }
+  const flare = Math.min((hw - neckHW) * 1.6 + 2, (tipStart - neck) * 0.8)
+  return { L, hw, r0, eyeHold, waistEnd, neckHW, neck, flare, tipStart, tip: m.tip }
 }
 
-// Half-width of the blade at distance y along its axis from the pivot: constant
-// neck, a smoothstep flare, the full-width body, then the tip.
+// Half-width of the blade at distance y along its axis from the pivot: the eye,
+// a smoothstep waist in to the neck, the neck, a smoothstep flare out to full
+// width, the body, then the tip.
 function halfWidthAt(p: BladeProfile, y: number): number {
-  if (y <= p.neck) return p.r0
+  const smooth = (t: number) => t * t * (3 - 2 * t)
+  if (y <= p.eyeHold) return p.r0
+  if (y < p.waistEnd) {
+    const t = clamp01((y - p.eyeHold) / Math.max(1e-6, p.waistEnd - p.eyeHold))
+    return p.r0 + (p.neckHW - p.r0) * smooth(t)
+  }
+  if (y <= p.neck) return p.neckHW
   if (y >= p.tipStart) {
     const s = clamp01((y - p.tipStart) / Math.max(1e-6, p.L - p.tipStart))
     return p.hw * clamp01(tipShape(p.tip, s))
   }
   const t = clamp01((y - p.neck) / Math.max(1e-6, p.flare))
-  return p.r0 + (p.hw - p.r0) * (t * t * (3 - 2 * t))
+  return p.neckHW + (p.hw - p.neckHW) * smooth(t)
 }
 
 // Same, but including the round root cap below the pivot (y < 0), so this is the
@@ -211,13 +327,16 @@ function silhouetteHalfWidth(p: BladeProfile, y: number): number {
 }
 
 // The y values the outline is sampled at: uniform along the blade, plus extra
-// density through the tip section where the profile curves hardest.
+// density through the two sections where the profile curves hardest — the eye's
+// waist and the tip.
 function outlineYs(p: BladeProfile): number[] {
   const ys: number[] = []
   const body = 80
   for (let k = 0; k <= body; k++) ys.push((p.L * k) / body)
   const tipN = 40
   for (let k = 1; k < tipN; k++) ys.push(p.tipStart + ((p.L - p.tipStart) * k) / tipN)
+  const waistN = 24
+  for (let k = 1; k < waistN; k++) ys.push((p.waistEnd * k) / waistN)
   return ys.sort((a, b) => a - b)
 }
 
@@ -267,6 +386,68 @@ function trimTool(m: FanModel, zTop: number): THREE.BufferGeometry {
   cyl.rotateX(Math.PI / 2) // cylinder axis Y → Z (through the blade)
   cyl.translate(0, 0, zTop / 2) // centred on the pivot, crossing both prism ends
   return csgSubtract(tool, weld(cyl))
+}
+
+// --- pivot hardware ---------------------------------------------------------
+
+// A cylinder along +Z spanning z ∈ [z0, z0+h], welded ready for CSG.
+function post0(d: number, z0: number, h: number, seg = 64): THREE.BufferGeometry {
+  const c = new THREE.CylinderGeometry(d / 2, d / 2, h, seg)
+  c.rotateX(Math.PI / 2) // cylinder axis Y → Z
+  c.translate(0, 0, z0 + h / 2)
+  return weld(c)
+}
+
+// The barrel post and its screw, both modelled axis-along-Z in their PRINT pose:
+// flange down / head down on z=0, threads pointing up. Axis-Z is also the fan's
+// own pivot axis, so the same geometry drops straight into the assembled view.
+//
+// Threads must print with the axis vertical — that way each thread turn is just
+// a layer's worth of circle, and the flanks (~50° here) are self-supporting. A
+// thread printed on its side needs supports inside the helix and comes out
+// unusable.
+function buildFanHardware(m: FanModel): THREE.BufferGeometry[] {
+  const pv = fanPivot(m)
+  if (!pv) return []
+  const EPS = 0.01 // additive parts must overlap, never meet coplanar
+
+  // --- post: flange on the plate, barrel up, threaded bore down from its top.
+  const barrelTop = pv.flangeT + pv.barrelLen
+  const body = csgAdd(
+    post0(pv.capD, 0, pv.flangeT),
+    post0(pv.barrelOD, pv.flangeT - EPS, pv.barrelLen + EPS),
+  )
+  // The bore tool overshoots the barrel's end face by more than its own lead-in
+  // taper, so the thread is full depth right at the mouth and the screw starts.
+  const over = pv.thread.pitch + 1
+  const post = csgSubtract(
+    body,
+    threadedRod(pv.thread, barrelTop - pv.boreDepth, pv.boreDepth + over, {
+      grow: THREAD.FIT,
+    }),
+  )
+
+  // --- screw: head down (its flat face is the one on show once assembled),
+  // threaded shaft up. The shaft's start lead is switched off and buried in the
+  // head instead, so the engagement is full depth over its whole length.
+  const shaftBase = pv.headT - 1.5
+  let screw = csgAdd(
+    post0(pv.capD, 0, pv.headT),
+    threadedRod(pv.thread, shaftBase, pv.threadLen + 1.5, { leadStart: false }),
+  )
+  // Scallops round the rim to finger-tighten: vertical walls, so they print
+  // clean, and they cross the head's side surface transversally (no coplanar
+  // overlap for Manifold to pinch on).
+  const flutes: THREE.BufferGeometry[] = []
+  for (let i = 0; i < HEAD_FLUTES; i++) {
+    const a = (2 * Math.PI * i) / HEAD_FLUTES
+    const c = post0(2.2, -1, pv.headT + 2, 24)
+    c.translate((Math.cos(a) * pv.capD) / 2, (Math.sin(a) * pv.capD) / 2, 0)
+    flutes.push(c)
+  }
+  screw = csgSubtract(screw, ...flutes)
+
+  return [post, screw]
 }
 
 // --- the open fan -----------------------------------------------------------
@@ -396,93 +577,129 @@ export interface FanLayout {
   w: number
   h: number
   offsets: { x: number; y: number }[] // translation to apply to a blade-local mesh
+  hardware: { x: number; y: number }[] // ...and to each pivot part, same order
 }
 
 export function fanLayout(m: FanModel): FanLayout {
   const n = bladeCount(m)
+  const pv = fanPivot(m)
+  // The two pivot parts are small enough to share one blade cell (a cell is over
+  // 100mm long and they are ~13mm across), so the grid only grows by one.
+  const items = n + (pv ? 1 : 0)
   const p = bladeProfile(m)
   const cw = 2 * p.hw + LAYOUT_GAP
   const ch = p.L + p.r0 + LAYOUT_GAP
-  let cols = Math.min(n, Math.max(1, Math.floor((LAYOUT_MAX_W + LAYOUT_GAP) / cw)))
-  const rows = Math.ceil(n / cols)
-  cols = Math.ceil(n / rows) // even the rows out (9 blades over 2 rows → 5 + 4)
+  let cols = Math.min(items, Math.max(1, Math.floor((LAYOUT_MAX_W + LAYOUT_GAP) / cw)))
+  const rows = Math.ceil(items / cols)
+  cols = Math.ceil(items / rows) // even the rows out (10 items over 2 rows → 5 + 5)
   const w = cols * cw - LAYOUT_GAP
   const h = rows * ch - LAYOUT_GAP
+  const cell = (i: number) => ({
+    x: -w / 2 + cw * (i % cols) + cw / 2,
+    y: h / 2 - ch * Math.floor(i / cols) - ch / 2,
+  })
   const yc = (p.L - p.r0) / 2 // the blade's own centre along its axis
   const offsets: { x: number; y: number }[] = []
   for (let i = 0; i < n; i++) {
-    const col = i % cols
-    const row = Math.floor(i / cols)
-    offsets.push({
-      x: -w / 2 + cw * col + cw / 2,
-      y: h / 2 - ch * row - ch / 2 - yc,
-    })
+    const c = cell(i)
+    offsets.push({ x: c.x, y: c.y - yc })
   }
-  return { cols, rows, w, h, offsets }
+  const hardware: { x: number; y: number }[] = []
+  if (pv) {
+    const c = cell(n)
+    const gap = pv.capD / 2 + 2
+    hardware.push({ x: c.x, y: c.y - gap }, { x: c.x, y: c.y + gap })
+  }
+  return { cols, rows, w, h, offsets, hardware }
 }
 
 // Outer size in the VIEWPORT's axes (Y up), matching whichever pose the preview
 // is showing — so the dims readout always describes what's on screen.
 export function fanOuterSize(m: FanModel): { x: number; y: number; z: number } {
   const maxT = effMaxThickness(m)
+  const pv = fanPivot(m)
+  const p = hubPlateThickness(m)
   if (m.preview === 'assembled') {
     const f = fanFrame(m)
-    return { x: f.w, y: f.h, z: (bladeCount(m) - 1) * (maxT + STACK_GAP) + maxT }
+    // The hub is the tallest thing in the assembled fan: the whole blade stack
+    // plus the post flange under it and the screw head on top.
+    const z = pv ? pv.totalH : (bladeCount(m) - 1) * p + maxT
+    return { x: f.w, y: f.h, z }
   }
   const l = fanLayout(m)
-  return { x: l.w, y: maxT, z: l.h }
+  // On the plate the blades are ~2mm tall but the pivot parts stand on end.
+  return { x: l.w, y: Math.max(maxT, pv ? pv.flangeT + pv.barrelLen : 0), z: l.h }
 }
 
 // --- placement --------------------------------------------------------------
 
-// Place freshly built blades for the viewport (Y-up, sitting on the plate) in
-// the chosen preview pose. Mutates in place — callers pass fresh geometry.
-export function orientFanForPreview(
-  blades: THREE.BufferGeometry[],
-  m: FanModel,
-): THREE.BufferGeometry[] {
+// Place a freshly built fan for the viewport (Y-up, sitting on the plate) in the
+// chosen preview pose. Mutates in place — callers pass fresh geometry.
+export function orientFanForPreview(built: BuiltFan, m: FanModel): BuiltFan {
+  const pv = fanPivot(m)
   if (m.preview === 'assembled') {
     // Open the fan: rotate each blade to its angle about the pivot and stack it
-    // in thickness. Lifting by the frame's lowest point puts the fan on the
-    // plate — for a wide spread the outermost blade dips further than the pivot.
+    // at the real eye-to-eye spacing (which is why that spacing has to clear the
+    // relief — otherwise this render would show blades intersecting, because the
+    // print would). Lifting by the frame's lowest point puts the fan on the
+    // plate: for a wide spread the outermost blade dips below the pivot.
     const lift = -fanFrame(m).minY
-    const stack = effMaxThickness(m) + STACK_GAP
-    blades.forEach((g, i) => {
+    const p = hubPlateThickness(m)
+    const base = pv ? pv.flangeT : 0 // the stack sits on the post's flange
+    built.blades.forEach((g, i) => {
       g.rotateZ(bladeAngle(m, i))
-      g.translate(0, lift, i * stack)
+      g.translate(0, lift, base + i * p)
       g.computeBoundingBox()
     })
-    return blades
+    if (pv) {
+      const [post, screw] = built.hardware
+      post.translate(0, lift, 0)
+      // Flip the screw over: it is modelled head-down for printing, but sits
+      // head-up on the barrel's end face with the shaft reaching back down the
+      // bore. The gap left by PIVOT_PLAY is what keeps the blades turning.
+      // (A 180° rotation is proper, so it preserves the thread's handedness.)
+      screw.rotateX(Math.PI)
+      // Screw it in far enough to be in phase. The bore was cut by a tool whose
+      // helix is keyed to z=0, so a shaft landing `dz` up the axis only mates
+      // when turned by dz/pitch of a turn — otherwise the modelled screw sits
+      // crossing the bore's threads and the assembled fan is interfering solids.
+      const dz = pv.flangeT + pv.barrelLen + pv.headT
+      screw.rotateZ((dz * 2 * Math.PI) / pv.thread.pitch)
+      screw.translate(0, lift, dz)
+      post.computeBoundingBox()
+      screw.computeBoundingBox()
+    }
+    return built
   }
-  // The print layout, lain down: the blades are modelled in the XY plane with
-  // the relief toward +Z, so rotating -90° about X drops them onto the plate
-  // relief-up. The layout is already centred on the origin, so nothing else
-  // needs moving.
-  const { offsets } = fanLayout(m)
-  blades.forEach((g, i) => {
-    const o = offsets[i]
+  // The print layout, lain down: parts are modelled in the XY plane with the
+  // relief (and the screw axis) toward +Z, so rotating -90° about X drops the
+  // blades onto the plate relief-up and stands the pivot parts on end — which is
+  // exactly how each has to print. The layout is already centred on the origin.
+  const l = fanLayout(m)
+  const lay = (g: THREE.BufferGeometry, o: { x: number; y: number }) => {
     g.translate(o.x, o.y, 0)
     g.rotateX(-Math.PI / 2)
     g.computeBoundingBox()
-  })
-  return blades
+  }
+  built.blades.forEach((g, i) => lay(g, l.offsets[i]))
+  built.hardware.forEach((g, i) => lay(g, l.hardware[i]))
+  return built
 }
 
-// Place blades for PRINT. A blade is modelled with its flat back on z=0 and the
-// relief toward +Z, which is already print space (back on the bed, relief up) —
-// exactly like a flat lithophane panel, so the exporter rotates nothing. All
-// this does is move each blade to its slot on the plate. Mutates in place.
-export function placeFanForPrint(
-  blades: THREE.BufferGeometry[],
-  m: FanModel,
-): THREE.BufferGeometry[] {
-  const { offsets } = fanLayout(m)
-  blades.forEach((g, i) => {
-    const o = offsets[i]
+// Place a fan for PRINT. Every part is modelled in its print pose already — a
+// blade with its flat back on z=0 and the relief toward +Z (like a flat
+// lithophane panel), and the pivot parts standing on the axis they must print
+// about — so the exporter rotates nothing. All this does is move each part to
+// its slot on the plate. Mutates in place.
+export function placeFanForPrint(built: BuiltFan, m: FanModel): BuiltFan {
+  const l = fanLayout(m)
+  const move = (g: THREE.BufferGeometry, o: { x: number; y: number }) => {
     g.translate(o.x, o.y, 0)
     g.computeBoundingBox()
-  })
-  return blades
+  }
+  built.blades.forEach((g, i) => move(g, l.offsets[i]))
+  built.hardware.forEach((g, i) => move(g, l.hardware[i]))
+  return built
 }
 
 // --- main build --------------------------------------------------------------
@@ -491,7 +708,7 @@ export function buildFan(m: FanModel): BuiltFan {
   const n = bladeCount(m)
   const p = bladeProfile(m)
   const maxT = effMaxThickness(m)
-  const hubT = clamp(m.hubThickness, m.minThickness, maxT)
+  const hubT = hubPlateThickness(m) // the eye plate — also the blade spacing
   const frame = fanFrame(m)
   const sample = fanSampler(m, frame)
   const rStart = reliefStartRadius(m)
@@ -511,8 +728,9 @@ export function buildFan(m: FanModel): BuiltFan {
   const dy = gh / (ny - 1)
 
   // Every blade has the same outline and pivot hole, so the trim tool is built
-  // once and reused — one boolean per blade.
-  const tool = trimTool(m, maxT)
+  // once and reused — one boolean per blade. The eye plate is the blade's
+  // thickest point (it has to clear the relief), so it sets the tool's height.
+  const tool = trimTool(m, Math.max(maxT, hubT))
 
   const blades: THREE.BufferGeometry[] = []
   for (let i = 0; i < n; i++) {
@@ -537,7 +755,10 @@ export function buildFan(m: FanModel): BuiltFan {
       for (let j = 0; j < ny; j++) {
         for (let k = 0; k < nx; k++) raw[j * nx + k] = zRaw(gx0 + k * dx, gy0 + j * dy)
       }
-      const d = ditherGrid(nx, ny, raw, m.layerHeight, Math.min(m.minThickness, hubT), maxT)
+      // The range runs up to the eye plate, not just maxThickness: the blend out
+      // of the flat hub zone legitimately passes through everything between the
+      // two, and clipping it there would put a step back in.
+      const d = ditherGrid(nx, ny, raw, m.layerHeight, m.minThickness, Math.max(maxT, hubT))
       // The hub zone is re-flattened after dithering: error diffusing in from
       // the relief boundary would otherwise leave a layer of speckle on the
       // faces the blades pivot against.
@@ -552,5 +773,5 @@ export function buildFan(m: FanModel): BuiltFan {
     blades.push(csgIntersect(heightfieldMesh(gx0, gy0, gw, gh, nx, ny, zAt), tool))
   }
 
-  return { blades, size: fanOuterSize(m) }
+  return { blades, hardware: buildFanHardware(m), size: fanOuterSize(m) }
 }

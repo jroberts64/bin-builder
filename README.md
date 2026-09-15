@@ -68,19 +68,30 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     assembled preview; 100% zoom just covers the fan.
   - **Fan shape** — blade count and open angle, then the blade itself: length,
     width, neck width/length and a **petal**, **pointed** or **round** tip.
-  - **Pivot** — the zone around the hub is left flat and untextured at its own
-    thickness so the blades stack cleanly and turn, with a hole for an M3 screw
-    and nut or a rivet. Blades have to overlap to fold, and backlight crosses the
-    whole stack, so the inner fan always reads darker; the picture still covers
-    the whole blade so it works however far the fan is opened (or leave that
-    inner zone deliberately plain).
+  - **Printed pivot screw** — a two-part barrel post and screw print alongside
+    the blades, the printed equivalent of a Chicago screw: the barrel threads
+    the blade holes and the screw tightens into it from the far side. Because the
+    barrel is what the screw bottoms out against, tightening it hard *can't*
+    seize the fan — the blades always keep turning. Coarse printable threads with
+    a self-supporting flank angle, a fluted head to finger-tighten, and no
+    supports needed. Or pick **plain hole** and use your own M3 hardware.
+  - **Pivot zone** — the eye around the pivot is left flat and untextured so the
+    blades stack cleanly and turn. Since they sit eye-to-eye, that thickness is
+    also the gap between blades, so it's raised automatically to clear the relief
+    — otherwise a blade's picture jams into the back of the next one and the fan
+    won't fold. Blades have to overlap to fold, and backlight crosses the whole
+    stack, so the inner fan always reads darker; the picture still covers the
+    whole blade so it works however far the fan is opened (or leave that inner
+    zone deliberately plain).
   - **Relief** — the same min/max thickness, detail and layer-step **dithering**
     as the panel. The sample budget is shared across the blades, so adding blades
     coarsens detail rather than building a mesh too heavy to slice.
-  - **Two views** — the fan **assembled** (to frame the photo) or the **print
-    layout**. Export is always the layout: blades laid out on the plate, backs
-    down and relief up, already oriented. 3MF keeps them as separate objects; the
-    STL is the whole plate as one mesh.
+  - **Two views** — the fan **assembled** (to frame the photo, screw and all) or
+    the **print layout**. Export is always the layout: blades **laying down** on
+    their backs with the relief up, and the two pivot parts standing on their
+    thread axis, since that's the only way threads print cleanly. Everything is
+    already oriented — don't rotate anything in the slicer. 3MF keeps every part
+    as a separate object; the STL is the whole plate as one mesh.
 - **Gridfinity toggle** — switch the Gridfinity foot, baseplate clearance and
   magnet/screw sockets on or off. Off = a plain flat-bottomed tray. Independent
   of how the bin is sized.

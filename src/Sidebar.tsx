@@ -26,10 +26,14 @@ import { panelHeight } from './model/litho'
 import {
   FanModel,
   FanTip,
+  MIN_SCREW_PIVOT,
   bladeCount,
   bladeStepRad,
   fanLayout,
   fanOuterSize,
+  fanPivot,
+  hubDiameter,
+  hubPlateThickness,
   overlapRadius,
   prepareFanImage,
   reliefStartRadius,
@@ -1099,6 +1103,9 @@ function FanControls({
     inches ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`
 
   const assembled = model.preview === 'assembled'
+  const screw = model.pivotStyle === 'screw'
+  const pv = fanPivot(model)
+  const plate = hubPlateThickness(model)
   const n = bladeCount(model)
   const size = fanOuterSize(model)
   const layout = fanLayout(model)
@@ -1254,21 +1261,43 @@ function FanControls({
       </Section>
 
       <Section title="Pivot" defaultOpen>
-        <Field label="Pivot hole">
-          <NumberInput value={model.pivotDiameter} min={0} max={12} step={0.2} unit="mm"
-            onChange={(v) => patch({ pivotDiameter: v })} />
+        <div className="seg">
+          <button className={screw ? 'active' : ''}
+            onClick={() => patch({ pivotStyle: 'screw',
+              pivotDiameter: Math.max(model.pivotDiameter, MIN_SCREW_PIVOT) })}>
+            Printed screw
+          </button>
+          <button className={!screw ? 'active' : ''}
+            onClick={() => patch({ pivotStyle: 'hole' })}>
+            Plain hole
+          </button>
+        </div>
+        <p className="hint">
+          {screw
+            ? `A two-part barrel post and screw print alongside the blades — the printed equivalent of a Chicago screw. The barrel threads the blade holes and the screw tightens into it from the far side, and because the barrel is what the screw bottoms out against, tightening it hard can’t seize the fan: the blades always keep turning.`
+            : 'Just a hole through the eye — bring your own M3 screw, washer and nut. Use a shouldered screw or a spacer, or tightening the nut will clamp the fan shut.'}
+        </p>
+        <Field label={screw ? 'Pivot hole (sets the screw size)' : 'Pivot hole'}>
+          <NumberInput value={model.pivotDiameter} min={screw ? MIN_SCREW_PIVOT : 0} max={14}
+            step={0.2} unit="mm" onChange={(v) => patch({ pivotDiameter: v })} />
         </Field>
-        <Field label="Neck thickness (flat zone)">
-          <NumberInput value={model.hubThickness} min={0.6} max={6} step={0.1} unit="mm"
+        {screw && pv && (
+          <p className="hint">
+            {`Barrel ${fmtNum(pv.barrelOD)} mm through the blades, with a ${fmtNum(pv.thread.majorD)} mm thread at ${fmtNum(pv.thread.pitch)} mm pitch inside it — coarse on purpose, and its own profile rather than a metric one, because a standard fine pitch here gives teeth a nozzle can’t resolve. Barrel ${fmtNum(pv.barrelLen)} mm long for a ${fmtNum(pv.stackH)} mm stack, so the assembled hub is ${fmtNum(pv.totalH)} mm thick and the screw takes ${fmtNum(pv.threadLen)} mm of thread. The hole can’t go below ${fmtNum(MIN_SCREW_PIVOT)} mm — the thread has to fit inside the barrel and still print.`}
+          </p>
+        )}
+        <Field label="Eye plate thickness">
+          <NumberInput value={model.hubThickness} min={0.6} max={8} step={0.1} unit="mm"
             onChange={(v) => patch({ hubThickness: v })} />
         </Field>
         <Toggle label="Leave the overlapping inner zone plain" checked={model.clearOverlap}
           onChange={(v) => patch({ clearOverlap: v })} />
         <p className="hint">
-          The zone around the pivot is left flat and untextured so the blades stack cleanly and
-          turn — {fmtNum(model.hubThickness)} mm each, {fmtNum(n * model.hubThickness)} mm for the
-          whole stack. Rivet it with an M3 screw and nut, or a {fmtNum(model.pivotDiameter)} mm
-          rivet.
+          {`The eye around the pivot is left flat and untextured so the blades stack cleanly and turn. Because they sit eye-to-eye, that thickness is also the gap between blades — so it has to clear the relief, or a blade’s picture jams into the back of the next one where they overlap and the fan won’t fold.${
+            plate > model.hubThickness + 1e-6
+              ? ` Raised to ${fmtNum(plate)} mm to clear the ${fmtNum(model.maxThickness)} mm relief.`
+              : ''
+          } ${fmtNum(plate)} mm each, ${fmtNum(n * plate)} mm for the stack. The eye itself is ${fmtNum(hubDiameter(model))} mm across, sized to keep material round the hole.`}
         </p>
         <p className="hint">
           {n < 2
@@ -1314,8 +1343,16 @@ function FanControls({
       <Section title="General" defaultOpen>
         <Toggle label="Show Build Plate" checked={showBuildPlate} onChange={setShowBuildPlate} />
         <p className="hint">
-          {`Exported as ${n} part${n === 1 ? '' : 's'} laid out ${layout.cols} × ${layout.rows} on the plate (${fmtNum(layout.w)} × ${fmtNum(layout.h)} mm), backs down and relief up — already oriented, don’t rotate them in the slicer. 3MF keeps the blades as separate objects; the STL is the whole plate as one mesh.`}
+          {`Exported as ${n + (pv ? 2 : 0)} parts — ${n} blade${n === 1 ? '' : 's'}${pv ? ' plus the post and screw' : ''} — laid out ${layout.cols} × ${layout.rows} on the plate (${fmtNum(layout.w)} × ${fmtNum(layout.h)} mm). Blades lie flat on their backs with the relief up${pv ? `, and the two pivot parts stand on their thread axis, ${fmtNum(pv.flangeT + pv.barrelLen)} mm tall` : ''} — already oriented, don’t rotate anything in the slicer. 3MF keeps every part as a separate object; the STL is the whole plate as one mesh.`}
         </p>
+        {pv && (
+          <p className="hint">
+            Print the pivot parts at the same layer height as everything else, no supports needed —
+            the thread flanks are self-supporting with the axis vertical, which is why they are
+            exported standing while the blades lie down. Assemble by stacking the blades on the
+            barrel and threading the screw in from the top.
+          </p>
+        )}
       </Section>
     </>
   )

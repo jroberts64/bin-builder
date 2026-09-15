@@ -17,7 +17,14 @@ import {
   maxOpeningDeg,
 } from './skadis'
 import { LithoModel, LithoShape, LithoOrientation, defaultLitho } from './litho'
-import { FanModel, FanTip, FanPreview, defaultFan } from './fan'
+import {
+  FanModel,
+  FanTip,
+  FanPreview,
+  FanPivotStyle,
+  MIN_SCREW_PIVOT,
+  defaultFan,
+} from './fan'
 
 // Versioned (de)serialization for a design. Everything that persists or shares —
 // localStorage, .json files, share URLs — goes through here so there is exactly
@@ -220,6 +227,7 @@ export function coerceLitho(raw: unknown): LithoModel {
 
 const FAN_TIPS: FanTip[] = ['petal', 'point', 'round']
 const FAN_PREVIEWS: FanPreview[] = ['assembled', 'flat']
+const FAN_PIVOTS: FanPivotStyle[] = ['screw', 'hole']
 
 // Turn arbitrary parsed JSON into a guaranteed-valid FanModel. The blade profile
 // spans (neck / flare / tip) are re-clamped against each other inside
@@ -227,6 +235,12 @@ const FAN_PREVIEWS: FanPreview[] = ['assembled', 'flat']
 export function coerceFan(raw: unknown): FanModel {
   const d = defaultFan()
   const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<FanModel>
+  // The pivot hole's minimum depends on how the pivot is held, so resolve the
+  // style first and clamp the diameter against it — the same shape as the skadis
+  // opening angle, which is clamped against its resolved side. A saved 3mm hole
+  // switched to a printed screw lands on the smallest screw that prints, rather
+  // than silently producing a barrel with no thread in it.
+  const pivotStyle = oneOf(m.pivotStyle, FAN_PIVOTS, d.pivotStyle)
   return {
     image: coerceReliefImage(m.image),
     blades: Math.round(num(m.blades, d.blades, 1, 24)),
@@ -238,8 +252,14 @@ export function coerceFan(raw: unknown): FanModel {
     tip: oneOf(m.tip, FAN_TIPS, d.tip),
     minThickness: num(m.minThickness, d.minThickness, 0.4, 3),
     maxThickness: num(m.maxThickness, d.maxThickness, 1, 8),
-    hubThickness: num(m.hubThickness, d.hubThickness, 0.6, 6),
-    pivotDiameter: num(m.pivotDiameter, d.pivotDiameter, 0, 12),
+    hubThickness: num(m.hubThickness, d.hubThickness, 0.6, 8),
+    pivotStyle,
+    pivotDiameter: num(
+      m.pivotDiameter,
+      d.pivotDiameter,
+      pivotStyle === 'screw' ? MIN_SCREW_PIVOT : 0,
+      14,
+    ),
     pitch: num(m.pitch, d.pitch, 0.2, 1),
     invert: bool(m.invert, d.invert),
     clearOverlap: bool(m.clearOverlap, d.clearOverlap),
