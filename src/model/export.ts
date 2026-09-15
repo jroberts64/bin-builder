@@ -5,7 +5,7 @@ import { BinModel } from './types'
 import { BoxModel } from './box'
 import { SkadisModel } from './skadis'
 import { LithoModel, buildLitho } from './litho'
-import { FanModel, buildFan, placeFanForPrint } from './fan'
+import { FanModel, buildFan, fanTemplate, placeFanForPrint } from './fan'
 import { buildBin } from './geometry'
 import { buildBox } from './box'
 import { buildSkadis } from './skadis'
@@ -541,6 +541,48 @@ function crc32(bytes: Uint8Array): number {
   let c = 0xffffffff
   for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8)
   return (c ^ 0xffffffff) >>> 0
+}
+
+// --- fan composition template ------------------------------------------------
+
+// Render `fanTemplate()` to a PNG: white where the blades fall, grey for the
+// flat hub zone, black for everything else. Drawn at the same 1400px the image
+// upload downscales to, so it doubles as the recommended canvas size.
+//
+// Generated from the live model rather than shipped as a file, because the
+// footprint moves with blade count, spread, length, width and tip — a static
+// template silently lies the moment any of those change.
+export async function exportFanTemplate(model: FanModel): Promise<Blob> {
+  const t = fanTemplate(model)
+  const W = 1400
+  const scale = W / t.w
+  const H = Math.round(t.h * scale)
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#1e1e1e' // outside the blades — wasted
+  ctx.fillRect(0, 0, W, H)
+  ctx.fillStyle = '#ffffff' // live picture
+  for (const poly of t.blades) {
+    ctx.beginPath()
+    poly.forEach((q, i) =>
+      i === 0 ? ctx.moveTo(q.x * scale, q.y * scale) : ctx.lineTo(q.x * scale, q.y * scale),
+    )
+    ctx.closePath()
+    ctx.fill()
+  }
+  const disc = (c: { x: number; y: number; r: number }, fill: string) => {
+    ctx.fillStyle = fill
+    ctx.beginPath()
+    ctx.arc(c.x * scale, c.y * scale, c.r * scale, 0, 2 * Math.PI)
+    ctx.fill()
+  }
+  disc(t.hub, '#6e6e6e') // flat pivot zone — carries no picture
+  disc(t.pivot, '#1e1e1e') // ...and the hole through it
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('template render failed'))), 'image/png'),
+  )
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

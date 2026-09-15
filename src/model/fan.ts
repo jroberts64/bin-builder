@@ -726,6 +726,63 @@ function fanSampler(m: FanModel, frame: FanFrame): (X: number, Y: number) => num
   }
 }
 
+// --- composition template ----------------------------------------------------
+
+// The open fan's footprint, for laying a photo out before uploading it.
+//
+// Only about 60% of `fanFrame()`'s rectangle is live picture: the bottom corners
+// fall outside the blades entirely and the hub carries no relief, so a photo
+// composed against the bounding box alone puts its subject in places the fan
+// cannot show. This returns the real silhouette so the UI can draw a mask.
+//
+// Geometry only — no raster, no DOM. Coordinates are millimetres within the
+// frame with **y increasing DOWNWARD**, so a 2D canvas can draw them directly.
+export interface FanTemplate {
+  w: number // mm, the frame
+  h: number
+  blades: { x: number; y: number }[][] // one closed polygon per blade
+  hub: { x: number; y: number; r: number } // the flat pivot zone — no picture
+  pivot: { x: number; y: number; r: number } // ...and the hole through it
+}
+
+export function fanTemplate(m: FanModel): FanTemplate {
+  const p = bladeProfile(m)
+  const f = fanFrame(m)
+  const n = bladeCount(m)
+  // Frame-relative, y down.
+  const map = (x: number, y: number) => ({
+    x: x - f.cx + f.w / 2,
+    y: f.h / 2 - (y - f.cy),
+  })
+  // One blade outline, blade-local: up one side, back down the other, then the
+  // round root cap below the pivot closes it — the same silhouette the trim
+  // tool cuts, so the mask cannot drift from the geometry.
+  const ys = outlineYs(p)
+  const local: { x: number; y: number }[] = []
+  for (const y of ys) local.push({ x: halfWidthAt(p, y), y })
+  for (let k = ys.length - 1; k >= 0; k--) local.push({ x: -halfWidthAt(p, ys[k]), y: ys[k] })
+  const capN = 24
+  for (let k = 1; k < capN; k++) {
+    const th = Math.PI + (Math.PI * k) / capN // (-r0,0) round through (0,-r0) to (r0,0)
+    local.push({ x: p.r0 * Math.cos(th), y: p.r0 * Math.sin(th) })
+  }
+  const blades: { x: number; y: number }[][] = []
+  for (let i = 0; i < n; i++) {
+    const a = bladeAngle(m, i)
+    const ca = Math.cos(a)
+    const sa = Math.sin(a)
+    blades.push(local.map((q) => map(q.x * ca - q.y * sa, q.x * sa + q.y * ca)))
+  }
+  const o = map(0, 0)
+  return {
+    w: f.w,
+    h: f.h,
+    blades,
+    hub: { ...o, r: reliefStartRadius(m) },
+    pivot: { ...o, r: effPivotDiameter(m) / 2 },
+  }
+}
+
 // --- print layout -----------------------------------------------------------
 
 // Where each blade goes on the plate. Blades are laid out in a grid rather than

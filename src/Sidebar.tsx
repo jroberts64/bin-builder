@@ -31,6 +31,7 @@ import {
   bladeCount,
   bladeStepRad,
   bladesMeetAtDeg,
+  fanTemplate,
   fanLayout,
   fanOuterSize,
   fanPivot,
@@ -57,6 +58,7 @@ import {
   exportFanSTL,
   exportFan3MF,
   downloadBlob,
+  exportFanTemplate,
 } from './model/export'
 import SaveMenu from './SaveMenu'
 
@@ -1135,6 +1137,7 @@ function FanControls({
   const stepDeg = (bladeStepRad(model) * 180) / Math.PI
   const overlap = overlapRadius(model)
   const reliefStart = reliefStartRadius(model)
+  const tmpl = fanTemplate(model)
   const tips: { id: FanTip; label: string }[] = [
     { id: 'petal', label: 'Petal' },
     { id: 'point', label: 'Pointed' },
@@ -1226,14 +1229,20 @@ function FanControls({
           it. 100% zoom just covers the fan{model.imageZoom < 100 && ', so at this zoom the blades outside the picture come out at their thinnest (a bright margin)'}
           . Zoom in to crop to faces; move it to pick what lands on the blades.
         </p>
+        <div className="add-row">
+          <button
+            className="btn small"
+            onClick={async () => downloadBlob(await exportFanTemplate(model), 'fan-template.png')}
+          >
+            Download layout template
+          </button>
+        </div>
         <p className="hint">
-          Making a picture for the fan?{' '}
-          <a href="/fan-template.png" download>
-            Download the layout template
-          </a>{' '}
-          — 1400×763 (1.835:1), white where the blades actually fall. The bottom corners and the
-          hub carry no picture at all, so keep the subject in the arc. Drawn for the default fan,
-          so it drifts if you change blade count, spread or length.
+          Composing a picture for the fan? The template is a mask of where the blades actually
+          fall, drawn for <b>these</b> settings — {fmtNum(Math.round(tmpl.w))} ×{' '}
+          {fmtNum(Math.round(tmpl.h))} mm, so {(tmpl.w / tmpl.h).toFixed(2)}:1, exported at 1400px
+          wide to match what uploads are downscaled to. White is live picture; the bottom corners
+          and the hub carry none, so keep the subject in the arc.
         </p>
       </Section>
 

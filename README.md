@@ -106,10 +106,12 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     picture starts inside it. It stiffens a blade whose highlights may be a couple
     of layers thick, keeps the edge from feathering to nothing, and frames each
     blade — backlit it reads as a dark outline. 0 turns it off.
-  - **Composition template** — a downloadable mask of where the blades actually
-    fall, at the fan's own aspect ratio, so you can lay a picture out before
-    uploading it. Only about 60% of the fan's bounding box is live picture: the
-    bottom corners and the hub carry none.
+  - **Composition template** — download a mask of where the blades actually fall,
+    generated for your current settings at the fan's own aspect ratio, so you can
+    lay a picture out before uploading it. Only about 60% of the fan's bounding
+    box is live picture: the bottom corners and the hub carry none. Exported at
+    1400px wide, which is what uploads are downscaled to, so it doubles as the
+    recommended canvas size.
   - **Relief** — the same min/max thickness, detail and layer-step **dithering**
     as the panel. The sample budget is shared across the blades, so adding blades
     coarsens detail rather than building a mesh too heavy to slice.
