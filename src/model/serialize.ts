@@ -251,7 +251,9 @@ export function coerceFan(raw: unknown): FanModel {
     neckWidth: num(m.neckWidth, d.neckWidth, 6, 60),
     neckLength: num(m.neckLength, d.neckLength, 5, 150),
     tip: oneOf(m.tip, FAN_TIPS, d.tip),
-    minThickness: num(m.minThickness, d.minThickness, 0.4, 3),
+    // A fan blade always prints flat, so its floor is a couple of layers, not
+    // the one-extrusion-width wall a standing panel needs (see coerceLitho).
+    minThickness: num(m.minThickness, d.minThickness, 0.3, 3),
     maxThickness: num(m.maxThickness, d.maxThickness, 1, 8),
     // 0 = auto (track the relief). A save from before the auto default keeps its
     // explicit value, which still reads as a deliberate "thicker eye" override.

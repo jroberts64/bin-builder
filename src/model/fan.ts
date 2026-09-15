@@ -79,15 +79,31 @@ export interface FanModel {
 export function defaultFan(): FanModel {
   return {
     image: null,
-    blades: 9,
+    // Proportions taken off the commercial BTS fan (see the tonal-range note
+    // below), which is a much more elegant blade than the stubby one this used
+    // to default to: a long 4.8:1 blade on a neck pinched to ~0.29 of its width,
+    // so the eye reads as a boss and the fan closes to a slim stick. Its ratios,
+    // not its absolute size — at its real 133mm the plate layout is 183x283mm
+    // and needs two plates (which is exactly what it ships as). At 115mm the
+    // layout is 159x247mm, so the default still lands on one 256mm bed.
+    // Measured there / here: length:width 4.78 / 4.79, neck:width 0.29 / 0.29,
+    // neckLength:length 0.218 / 0.217, 11 blades / 11 blades.
+    blades: 11,
     spreadDeg: 160,
-    bladeLength: 100,
+    bladeLength: 115,
     bladeWidth: 24,
-    neckWidth: 12,
-    neckLength: 22,
+    neckWidth: 7,
+    neckLength: 25,
     tip: 'petal',
-    minThickness: 0.6,
-    maxThickness: 1.8,
+    // The tonal range IS the picture's contrast: transmission through the relief
+    // is e^(-mu*t), so what the eye gets is set by the difference between these
+    // two, not their ratio. 0.35–2.2mm is ~2.9 stops. The old 0.6–1.8 was 1.8
+    // stops — half the contrast — and measuring a well-regarded commercial fan
+    // (0.33–2.21mm, 0.12mm layers) is what set these. The thin end is free:
+    // blade spacing follows maxThickness alone, so only the thick end costs
+    // stack height (0.4mm/blade here, ~3.6mm on a nine-blade hub).
+    minThickness: 0.35,
+    maxThickness: 2.2,
     hubThickness: 0, // auto: track the relief
     pivotStyle: 'screw',
     pivotDiameter: 8,
@@ -582,10 +598,11 @@ export function reliefStartRadius(m: FanModel): number {
 // Thickness of the photograph at a point in the ASSEMBLED fan's XY plane.
 //
 // The picture is cover-fitted to the fan's bounding box at 100% zoom — so every
-// blade is covered by real image content — then scaled by `imageZoom` and shifted
-// by the offsets. Samples that fall outside the picture read as white (the
-// thinnest relief), which gives a clean bright margin when zoomed out instead of
-// the smeared edge pixels an edge-clamp would produce.
+// blade is covered by real image content — then scaled UP by `imageZoom` (200% =
+// twice as large on the fan, i.e. a tighter crop) and shifted by the offsets.
+// Samples that fall outside the picture read as white (the thinnest relief),
+// which gives a clean bright margin below 100% instead of the smeared edge
+// pixels an edge-clamp would produce.
 function fanSampler(m: FanModel, frame: FanFrame): (X: number, Y: number) => number {
   const minT = m.minThickness
   const maxT = effMaxThickness(m)
@@ -595,7 +612,12 @@ function fanSampler(m: FanModel, frame: FanFrame): (X: number, Y: number) => num
   }
   const gray = getGray(m.image)
   const cover = Math.max(frame.w / gray.w, frame.h / gray.h) // mm per pixel at 100%
-  const mmPerPx = cover / Math.max(0.01, m.imageZoom / 100)
+  // Zoom SCALES the picture on the fan, so it multiplies here: at 200% the photo
+  // is twice as big, every pixel covers twice as many mm, and the fan sees half
+  // as much of it — a tighter crop. Dividing inverts the control, which is the
+  // bug this replaces: 400% rendered the picture at quarter size and left most
+  // of the fan at minimum thickness, i.e. blank.
+  const mmPerPx = cover * Math.max(0.01, m.imageZoom / 100)
   return (X, Y) => {
     const px = gray.w / 2 + (X - frame.cx - m.imageOffsetX) / mmPerPx
     const py = gray.h / 2 - (Y - frame.cy - m.imageOffsetY) / mmPerPx // image row 0 = top

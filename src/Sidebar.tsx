@@ -39,7 +39,7 @@ import {
   prepareFanImage,
   reliefStartRadius,
 } from './model/fan'
-import { greyLevels, imageFileToDataURL } from './model/relief'
+import { greyLevels, imageFileToDataURL, TONE_REF_MU } from './model/relief'
 import { Design, ObjectType, assertNever, toJSON } from './model/serialize'
 import {
   export3MF,
@@ -958,6 +958,14 @@ function LithoControls({
           Dark areas print thick, light areas thin — backlight the print to reveal the picture.
           The image covers the panel and any aspect-ratio overflow is cropped.
         </p>
+        <p className="hint">
+          <b>Pick a high-contrast photo.</b> The whole picture has to fit in{' '}
+          {greyLevels(model.minThickness, model.maxThickness, model.layerHeight)} printable grey
+          levels, so a bright, evenly-lit shot comes out flat and muddy no matter how the relief is
+          tuned. What works is real blacks against real highlights — a lit subject on a dark
+          background is close to ideal. Crop tight before uploading, and raise the contrast in a
+          photo editor first if it looks washed out here.
+        </p>
       </Section>
 
       <Section title="Shape & size" defaultOpen>
@@ -1171,6 +1179,14 @@ function FanControls({
           under it when the fan is open. Dark areas print thick, light areas thin — backlight the
           fan to reveal the picture.
         </p>
+        <p className="hint">
+          <b>Pick a high-contrast photo.</b> The whole picture has to fit in{' '}
+          {greyLevels(model.minThickness, model.maxThickness, model.layerHeight)} printable grey
+          levels, so a bright, evenly-lit shot comes out flat and muddy no matter how the relief is
+          tuned. What works is real blacks against real highlights — a lit subject on a dark
+          background is close to ideal. Crop tight before uploading, and raise the contrast in a
+          photo editor first if it looks washed out here.
+        </p>
       </Section>
 
       <Section title="Position on the fan" defaultOpen>
@@ -1318,7 +1334,7 @@ function FanControls({
 
       <Section title="Relief" defaultOpen>
         <Field label="Min thickness (lightest)">
-          <NumberInput value={model.minThickness} min={0.4} max={3} step={0.1} unit="mm"
+          <NumberInput value={model.minThickness} min={0.3} max={3} step={0.1} unit="mm"
             onChange={(v) => patch({ minThickness: v })} />
         </Field>
         <Field label="Max thickness (darkest)">
@@ -1339,7 +1355,7 @@ function FanControls({
         <p className="hint">
           {`This range is what sets how thick a blade is: ${fmtNum(plate)} mm${
             eyeOverride ? ' (held there by the thicker eye below)' : ` — the ${fmtNum(model.maxThickness)} mm darkest point plus the clearance the next blade in the stack needs`
-          }, so the hub stacks to ${fmtNum(n * plate)} mm. Thin the blade by thinning this range. Contrast is the ratio of the two, not the difference, so scaling both down keeps the picture: ${fmtNum(model.minThickness)}/${fmtNum(model.maxThickness)} is ${(model.maxThickness / model.minThickness).toFixed(1)}×.`}
+          }, so the hub stacks to ${fmtNum(n * plate)} mm. Thinning the blade costs contrast, and that is the real trade here: light falls off as e^(-μt), so all the picture can show is set by the ${fmtNum(model.maxThickness - model.minThickness)} mm GAP between the two — ${(Math.exp(TONE_REF_MU * (model.maxThickness - model.minThickness))).toFixed(1)}:1 between lightest and darkest, about ${(Math.log2(Math.exp(TONE_REF_MU * (model.maxThickness - model.minThickness)))).toFixed(1)} stops. Scaling both ends down keeps their ratio but halves the picture.`}
         </p>
         <p className="hint">
           Blades print flat, so brightness is the layer stack and this range gives only{' '}
