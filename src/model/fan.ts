@@ -339,7 +339,10 @@ export function bladeAngle(m: FanModel, i: number): number {
 
 // How long the tip section runs, as a multiple of the blade's half-width. A
 // round tip is a semicircle; a petal is the long ogee of the reference fan.
-const TIP_LEN: Record<FanTip, number> = { round: 1, point: 1.8, petal: 2.6 }
+// Tip length as a multiple of the blade's half-width. These are short on
+// purpose: a long tip forces the blade to reach FULL WIDTH early, and a blade at
+// full width near the pivot is one that buries its neighbours. See `flare`.
+const TIP_LEN: Record<FanTip, number> = { round: 0.8, point: 1.2, petal: 1.5 }
 
 // Tip half-width as a fraction of the blade's, over s ∈ [0,1] from the start of
 // the tip section to the very point.
@@ -389,9 +392,19 @@ function bladeProfile(m: FanModel): BladeProfile {
   const neck = clamp(m.neckLength, waistEnd + 1, L * 0.6)
   const tipLen = Math.min(hw * TIP_LEN[m.tip], (L - neck) * 0.75)
   const tipStart = L - tipLen
-  // Widen over a distance in proportion to how much width is gained, but never
-  // past the start of the tip.
-  const flare = Math.min((hw - neckHW) * 1.6 + 2, (tipStart - neck) * 0.8)
+  // Widen over very nearly the whole body, so the blade only reaches full width
+  // just before the tip.
+  //
+  // THIS IS WHAT DECIDES HOW MUCH OF THE PICTURE THE FAN BURIES, and it is not
+  // obvious from looking at one blade. Adjacent blades Δθ apart overlap wherever
+  // `halfWidth(r) > r·sin(Δθ/2)`, so a blade that reaches full width close to
+  // the pivot is buried by its neighbours over most of its length. The old rule
+  // widened over a distance proportional to the width gained — ~18mm on the
+  // default blade, full width by r=47 of 133 — and buried **43%** of the picture
+  // area at the default 11 blades / 160°. Widening over 0.95 of the body instead
+  // reaches full width at r≈108 and buries **1%**. The reference fan is shaped
+  // the same way (full width by ~110mm) and buries 0%.
+  const flare = (tipStart - neck) * 0.95
   return { L, hw, r0, eyeHold, waistEnd, neckHW, neck, flare, tipStart, tip: m.tip }
 }
 
