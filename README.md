@@ -77,7 +77,18 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     continuously across the blades. Zoom and move it over the fan and watch the
     assembled preview; 100% zoom just covers the fan.
   - **Fan shape** — blade count and open angle, then the blade itself: length,
-    width, neck width/length and a **petal**, **pointed** or **round** tip.
+    width, neck width/length, a **tail** below the pivot, and a **petal**,
+    **pointed** or **round** tip. Length is measured pivot to tip, so the tail is
+    extra: it gives the closed fan a handle and the open one a splayed shell
+    under the hub. Set it to 0 for a blade that just ends in a round eye.
+  - **Open stop (governor)** — arc ribs on each blade's face ride in matching
+    grooves in the back of the next one, and run out of travel at exactly the
+    angle between blades. So the fan stops open at the angle you designed it
+    for — no over-opening it into gaps — and stops again when it's closed. Both
+    features are 45° V-profiles, so they print with no supports and add nothing
+    to the hub's stacked height. How many arcs fit depends on how much width the
+    blade has near the hub; the controls tell you how many you've got and what
+    to change if you want more.
   - **Printed pivot screw** — a two-part barrel post and screw print alongside
     the blades, the printed equivalent of a Chicago screw: the barrel threads
     the blade holes and the screw tightens into it from the far side. Because the
@@ -121,9 +132,9 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     thread axis, since that's the only way threads print cleanly. Everything is
     already oriented — don't rotate anything in the slicer. 3MF keeps every part
     as a separate object; the STL is the whole plate as one mesh.
-  - **Plate size** — the default fan is a full-size 262mm one, and eleven 133mm
-    blades do not fit a 256mm bed in one go: the layout is 183 × 283mm. Either
-    print it in two batches (a single row is 183 × 142mm and fits comfortably) or
+  - **Plate size** — the default fan is a full-size 262mm one, and eleven 157mm
+    blades do not fit a 256mm bed in one go: the layout is 183 × 317mm. Either
+    print it in two batches (a single row is 183 × 159mm and fits comfortably) or
     shorten the blades. The dimensions readout shows the layout size in the
     **print layout** view.
 - **Gridfinity toggle** — switch the Gridfinity foot, baseplate clearance and
@@ -237,7 +248,7 @@ For a second project in the same AWS account, deploy `github-oidc.yaml` with
 | `src/model/skadis.ts` | `SkadisModel` + `buildSkadis`: pegboard holder — tapered rect/round container, front/side opening, open bottom, back hooks (one mesh) |
 | `src/model/relief.ts` | Shared image-relief primitives (panel + fan): image decode cache, Beer–Lambert tone curve, heightfield mesh, layer-step dithering |
 | `src/model/litho.ts` | `LithoModel` + `buildLitho`: lithophane panel — shape, border rim, hanging hole, flat/standing placement |
-| `src/model/fan.ts` | `FanModel` + `buildFan`: lithophane fan — blade silhouette, the photo-across-the-open-fan mapping, border rim, pivot hardware, plate layout |
+| `src/model/fan.ts` | `FanModel` + `buildFan`: lithophane fan — blade silhouette, the photo-across-the-open-fan mapping, border rim, the open-stop governor, pivot hardware, plate layout |
 | `src/model/thread.ts` | Printable helical screw threads for the fan's pivot post and screw |
 | `src/model/csg.ts` | Manifold (WASM) add/subtract wrappers, async `initCSG()`, THREE↔Manifold conversion, vertex-weld helper |
 | `src/model/export.ts` | STL exporter + dependency-free 3MF (ZIP/OPC) and faceted-STEP writers |

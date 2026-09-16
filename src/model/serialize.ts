@@ -22,6 +22,7 @@ import {
   FanTip,
   FanPreview,
   FanPivotStyle,
+  FanGovernor,
   MIN_SCREW_PIVOT,
   defaultFan,
 } from './fan'
@@ -230,6 +231,7 @@ export function coerceLitho(raw: unknown): LithoModel {
 const FAN_TIPS: FanTip[] = ['petal', 'point', 'round']
 const FAN_PREVIEWS: FanPreview[] = ['assembled', 'flat']
 const FAN_PIVOTS: FanPivotStyle[] = ['screw', 'hole']
+const FAN_GOVERNORS: FanGovernor[] = ['ribs', 'none']
 
 // Turn arbitrary parsed JSON into a guaranteed-valid FanModel. The blade profile
 // spans (neck / flare / tip) are re-clamped against each other inside
@@ -251,6 +253,8 @@ export function coerceFan(raw: unknown): FanModel {
     bladeWidth: num(m.bladeWidth, d.bladeWidth, 8, 80),
     neckWidth: num(m.neckWidth, d.neckWidth, 6, 60),
     neckLength: num(m.neckLength, d.neckLength, 5, 150),
+    // 0 = no tail, i.e. the plain round eye cap the blade used to end in.
+    tailLength: num(m.tailLength, d.tailLength, 0, 120),
     tip: oneOf(m.tip, FAN_TIPS, d.tip),
     // A fan blade always prints flat, so its floor is a couple of layers, not
     // the one-extrusion-width wall a standing panel needs (see coerceLitho).
@@ -259,6 +263,9 @@ export function coerceFan(raw: unknown): FanModel {
     // 0 = auto (track the relief). A save from before the auto default keeps its
     // explicit value, which still reads as a deliberate "thicker eye" override.
     hubThickness: num(m.hubThickness, d.hubThickness, 0, 8),
+    // A save predating the governor picks it up from the default, deliberately:
+    // it is a fix, and the arcs are derived so they fit whatever that fan is.
+    governor: oneOf(m.governor, FAN_GOVERNORS, d.governor),
     pivotStyle,
     pivotDiameter: num(
       m.pivotDiameter,

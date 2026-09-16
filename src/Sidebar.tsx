@@ -35,6 +35,7 @@ import {
   fanLayout,
   fanOuterSize,
   fanPivot,
+  governorPlan,
   hubDiameter,
   hubPlateThickness,
   overlapRadius,
@@ -1137,6 +1138,7 @@ function FanControls({
   const stepDeg = (bladeStepRad(model) * 180) / Math.PI
   const overlap = overlapRadius(model)
   const reliefStart = reliefStartRadius(model)
+  const gov = governorPlan(model)
   const tmpl = fanTemplate(model)
   const tips: { id: FanTip; label: string }[] = [
     { id: 'petal', label: 'Petal' },
@@ -1304,10 +1306,17 @@ function FanControls({
           <NumberInput value={model.neckLength} min={5} max={150} step={1} unit="mm"
             onChange={(v) => patch({ neckLength: v })} />
         </Field>
+        <Field label="Tail (below the pivot)">
+          <NumberInput value={model.tailLength} min={0} max={120} step={1} unit="mm"
+            onChange={(v) => patch({ tailLength: v })} />
+        </Field>
         <p className="hint">
           Blades are widest in the middle and narrow to a neck at the pivot, so they can fan out
           without their hubs fighting. Spans are re-fitted to each other, so a short blade won't
           produce a broken outline.
+          {' '}{model.tailLength > 0
+            ? `The pivot sits ${fmtLen(model.tailLength)} up from the end of the blade, so the tails make a handle when the fan is closed and splay into a shell under the hub when it's open. Length is measured pivot to tip, so the blade is ${fmtLen(model.bladeLength + model.tailLength)} overall.`
+            : 'With no tail the blade ends in a round cap at the pivot.'}
         </p>
       </Section>
 
@@ -1345,6 +1354,19 @@ function FanControls({
               onChange={(v) => patch({ hubThickness: v })} />
           </Field>
         )}
+        <Toggle label="Stop the fan opening too far" checked={model.governor === 'ribs'}
+          onChange={(v) => patch({ governor: v ? 'ribs' : 'none' })} />
+        <p className="hint">
+          {model.governor !== 'ribs'
+            ? 'Off — nothing limits the swing, so the fan can be pulled open past the angle it was designed for and gaps open between the blades.'
+            : !gov
+              ? 'With one blade there is nothing to stop.'
+              : gov.arcs.length > 0
+                ? `${gov.arcs.length} arc rib${gov.arcs.length > 1 ? 's' : ''} on each blade’s face ride in matching grooves in the back of the next one, and run out of travel at ${stepDeg.toFixed(1)}° per blade — so the fan stops open at exactly ${model.spreadDeg}°, and stops again closed. Both are 45° V-profiles, which is what lets them print with no support. How many fit is decided by how much width the blade has near the hub: widen or lengthen the neck for more.`
+                : gov.blocked === 'plate'
+                  ? `The eye plate is only ${fmtNum(plate)} mm thick — too thin to take a groove and still have material over it. Thicken the relief, or turn on the thicker eye above.`
+                  : `No room for the arcs: ${stepDeg.toFixed(1)}° of travel per blade needs more width near the hub than this blade has. Widen the neck, lengthen it, or use more blades over the same spread.`}
+        </p>
         <Toggle label="Leave the overlapping inner zone plain" checked={model.clearOverlap}
           onChange={(v) => patch({ clearOverlap: v })} />
         <p className="hint">

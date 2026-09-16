@@ -40,6 +40,14 @@ export type FanTip = 'petal' | 'point' | 'round'
 // exactly one sensible print pose (flat on its back, relief up).
 export type FanPreview = 'assembled' | 'flat'
 
+// The open-stop mechanism. Blades tile the open fan at exactly `spreadDeg`, but
+// nothing stops a hand pulling them past it into a gappy over-opened fan.
+//   'ribs' — arc ribs on each blade's top face riding in matching arc grooves in
+//            the next blade's bottom face, sized so the pair runs out of travel
+//            at the modelled spread (and at the closed stack, the other end).
+//   'none' — no stop; the blades swing freely.
+export type FanGovernor = 'ribs' | 'none'
+
 // How the blades are held together at the pivot.
 //   'screw' — a printed two-part barrel post + screw is generated and exported
 //             alongside the blades (see "the pivot screw" below). The blade hole
@@ -55,6 +63,7 @@ export interface FanModel {
   bladeWidth: number // mm, widest point of a blade
   neckWidth: number // mm, width at the pivot (also the root cap diameter)
   neckLength: number // mm, how far the narrow neck runs from the pivot
+  tailLength: number // mm, how far the blade runs BELOW the pivot. 0 = a round eye cap
   tip: FanTip // blade tip silhouette
   minThickness: number // mm, thickness of the lightest areas
   maxThickness: number // mm, thickness of the darkest areas
@@ -62,6 +71,7 @@ export interface FanModel {
   // relief, which is what the stack needs. Above that it's an explicit floor — a
   // deliberately thicker eye for strength. It can never go BELOW the relief (see
   // `hubPlateThickness`), so a value under the auto one would be a no-op.
+  governor: FanGovernor // stop the fan opening past `spreadDeg`
   pivotStyle: FanPivotStyle // printed screw, or a plain hole for hardware
   pivotDiameter: number // mm, the hole through the blade eye
   pitch: number // mm per relief sample
@@ -125,6 +135,17 @@ export function defaultFan(): FanModel {
     bladeWidth: 28,
     neckWidth: 8,
     neckLength: 29,
+    // The pivot sits UP the blade, leaving a tail below it. Measured off the
+    // same reference fan: 158.3mm of blade with the hole 24.3mm from one end,
+    // so the 133mm above the pivot is `bladeLength` and this is the rest. The
+    // tails are what make the closed fan a stick you can hold, and in the open
+    // fan they splay into the scalloped shell under the hub. The governor does
+    // NOT need them — all its arcs are on the blade side — so 0 is a legitimate
+    // setting that restores the plain round eye cap.
+    //
+    // It costs plate depth: `fanLayout` cells grow by this much, and the default
+    // layout is already 27mm too deep for a 256mm bed (see above).
+    tailLength: 24,
     tip: 'petal',
     // The tonal range IS the picture's contrast: transmission through the relief
     // is e^(-mu*t), so what the eye gets is set by the difference between these
@@ -136,6 +157,10 @@ export function defaultFan(): FanModel {
     minThickness: 0.3,
     maxThickness: 2.2,
     hubThickness: 0, // auto: track the relief
+    // On by default: an ungoverned fan opens straight past the spread it was
+    // designed for, and the arcs cost nothing but a groove in a face that is
+    // flat plate anyway.
+    governor: 'ribs',
     pivotStyle: 'screw',
     pivotDiameter: 8,
     pitch: 0.35,
@@ -204,6 +229,31 @@ const BORDER_BLEND = 0.4
 // past this go to a second row, which keeps a 9-blade fan on one plate).
 const LAYOUT_GAP = 3
 const LAYOUT_MAX_W = 220
+
+// --- the governor -----------------------------------------------------------
+// Concentric arc ribs on a blade's TOP face riding in matching arc grooves in
+// the next blade's BOTTOM face. The groove spans as much of the hub plate as the
+// blade's outline allows; the rib is that arc shortened by exactly the angle
+// between adjacent blades, and parked at one end of it. So the rib is hard
+// against one groove wall with the fan closed, and against the other at full
+// spread: the stack cannot over-rotate in either direction.
+//
+// Taken off the reference fan, which runs three such pairs at r = 9.0 / 14.6 /
+// 20.25mm with 14° of travel — 10 gaps x 14° = its 140° spread.
+//
+// BOTH FEATURES ARE 45° V-PROFILES, and that is a print rule, not a style: the
+// groove opens downward into the bed face, so every layer above it overhangs at
+// 45° and bridges itself, and the rib is a self-supporting peak rather than a
+// slab with an unsupported roof. Hence `halfBase == height` for both, which also
+// makes the groove automatically GOV_FIT wider per side than the rib it takes.
+const GOV_FLOOR = 0.8 // material left over a groove, so it is a pocket not a hole
+const GOV_FIT = 0.15 // groove deeper (and so wider) than the rib
+const GOV_MIN_RIB = 0.6 // shallower than this is not a stop, it is a texture
+const GOV_EDGE = 1.0 // arc ends held this far inside the blade outline
+const GOV_BEAR = 1.2 // flat bearing ring left around the pivot hole
+const GOV_MIN_RIB_DEG = 6 // shortest rib arc worth building
+const GOV_EMBED = 0.2 // rib base sunk into the plate, so no face is coplanar
+const GOV_SEG = 0.3 // mm of arc per sweep segment
 
 // --- the pivot screw -------------------------------------------------------
 // A two-part barrel post, the printed equivalent of a Chicago screw: a flanged
@@ -383,6 +433,13 @@ interface BladeProfile {
   flare: number // mm over which the neck widens to full width
   tipStart: number // where the tip section begins
   tip: FanTip
+  // The tail below the pivot. `tail` is 0 for the plain round eye cap, in which
+  // case the three fields after it are unused.
+  tail: number // how far below the pivot the blade runs
+  tailHW: number // half-width of the tail's straight run
+  tailWaist: number // the eye has pinched to that by here
+  tailCap: number // ...and the round end is centred here
+  root: number // how far the silhouette reaches below the pivot, tail or cap
 }
 
 // Resolve the model's blade dimensions into a consistent profile: every span is
@@ -413,7 +470,29 @@ function bladeProfile(m: FanModel): BladeProfile {
   // reaches full width at r≈108 and buries **1%**. The reference fan is shaped
   // the same way (full width by ~110mm) and buries 0%.
   const flare = (tipStart - neck) * 0.95
-  return { L, hw, r0, eyeHold, waistEnd, neckHW, neck, flare, tipStart, tip: m.tip }
+  // The tail mirrors the eye's own waist rule, so the stick reads as one shape
+  // through the pivot rather than two cones meeting at it.
+  const tail = m.tailLength > 0 ? Math.max(m.tailLength, r0 + 2) : 0
+  const tailHW = Math.min(neckHW, r0 - 0.5)
+  const tailCap = Math.max(tail - tailHW, eyeHold + 0.5)
+  const tailWaist = Math.min(tailCap, eyeHold + Math.max(1.5, (r0 - tailHW) * 1.8))
+  return {
+    L,
+    hw,
+    r0,
+    eyeHold,
+    waistEnd,
+    neckHW,
+    neck,
+    flare,
+    tipStart,
+    tip: m.tip,
+    tail,
+    tailHW,
+    tailWaist,
+    tailCap,
+    root: tail > 0 ? tail : r0,
+  }
 }
 
 // Half-width of the blade at distance y along its axis from the pivot: the eye,
@@ -440,9 +519,32 @@ function halfWidthAt(p: BladeProfile, y: number): number {
   return p.neckHW + (p.hw - p.neckHW) * t
 }
 
-// Same, but including the round root cap below the pivot (y < 0), so this is the
-// blade's full silhouette. Used for bounding boxes and the grid extent.
+// Half-width of the tail at distance `u` BELOW the pivot: the eye, a smoothstep
+// waist in, the straight run, then the semicircular end. With no tail this is
+// the round eye cap the blade used to end in.
+function tailHalfWidth(p: BladeProfile, u: number): number {
+  if (p.tail <= 0) return Math.sqrt(Math.max(0, p.r0 * p.r0 - u * u))
+  if (u <= p.eyeHold) return p.r0
+  if (u >= p.tailCap) return Math.sqrt(Math.max(0, p.tailHW * p.tailHW - (u - p.tailCap) ** 2))
+  if (u < p.tailWaist) {
+    const t = clamp01((u - p.eyeHold) / Math.max(1e-6, p.tailWaist - p.eyeHold))
+    return p.r0 + (p.tailHW - p.r0) * (t * t * (3 - 2 * t))
+  }
+  return p.tailHW
+}
+
+// The blade's full physical silhouette, tail included. Bounding boxes, the grid
+// extent and the plate layout use this.
 function silhouetteHalfWidth(p: BladeProfile, y: number): number {
+  if (y < 0) return tailHalfWidth(p, -y)
+  return halfWidthAt(p, y)
+}
+
+// The silhouette the PICTURE is framed against: the blade above the pivot plus
+// the round eye cap, deliberately ignoring the tail. The tail lies inside the
+// flat hub zone and so carries no relief at all, and letting it grow the frame
+// would silently re-crop the photograph the moment a tail was added.
+function frameHalfWidth(p: BladeProfile, y: number): number {
   if (y < 0) return Math.sqrt(Math.max(0, p.r0 * p.r0 - y * y))
   return halfWidthAt(p, y)
 }
@@ -472,7 +574,18 @@ export function bladesMeetAtDeg(m: FanModel): number {
 // that correction the rim pinches to nothing wherever the outline runs steeply
 // — which is the tip and the waist, exactly where a thin edge is most fragile.
 function edgeInset(p: BladeProfile, x: number, y: number): number {
-  if (y <= 0) return p.r0 - Math.hypot(x, y) // the round root cap below the pivot
+  if (y <= 0) {
+    const u = -y
+    if (p.tail <= 0) return p.r0 - Math.hypot(x, u) // the round root cap
+    // The tail's round end is exact; the rest gets the same slope correction as
+    // the blade above the pivot.
+    if (u >= p.tailCap) return p.tailHW - Math.hypot(x, u - p.tailCap)
+    const g = 0.25
+    const ua = Math.max(0, u - g)
+    const ub = Math.min(p.tail, u + g)
+    const ts = ub > ua ? (tailHalfWidth(p, ub) - tailHalfWidth(p, ua)) / (ub - ua) : 0
+    return (tailHalfWidth(p, u) - Math.abs(x)) / Math.hypot(1, ts)
+  }
   const h = 0.25
   const ya = Math.max(0, y - h)
   const yb = Math.min(p.L, y + h)
@@ -493,6 +606,17 @@ function outlineYs(p: BladeProfile): number[] {
   const waistN = 24
   for (let k = 1; k < waistN; k++) ys.push((p.waistEnd * k) / waistN)
   return ys.sort((a, b) => a - b)
+}
+
+// ...and the distances below the pivot the TAIL is sampled at, ending exactly on
+// the tip so the outline closes on a point.
+function tailUs(p: BladeProfile): number[] {
+  const us: number[] = []
+  const run = 36
+  for (let k = 1; k <= run; k++) us.push((p.tailCap * k) / run)
+  const capN = 20
+  for (let k = 1; k <= capN; k++) us.push(p.tailCap + (p.tailHW * k) / capN)
+  return us
 }
 
 // The blade outline in the XY plane: up the right side, across the point, down
@@ -519,9 +643,201 @@ function bladeShape(m: FanModel): THREE.Shape {
   line(0, p.L) // the point itself, whatever the sampling did
   for (let k = ys.length - 1; k >= 0; k--) line(-halfWidthAt(p, ys[k]), ys[k])
   line(-p.r0, 0)
-  // CCW from (-r0,0) through (0,-r0) back to (r0,0) — the cap closes the loop.
-  s.absarc(0, 0, p.r0, Math.PI, 2 * Math.PI, false)
+  if (p.tail <= 0) {
+    // CCW from (-r0,0) through (0,-r0) back to (r0,0) — the cap closes the loop.
+    s.absarc(0, 0, p.r0, Math.PI, 2 * Math.PI, false)
+    return s
+  }
+  // ...or, with a tail, on down its left side, round the end and back up the
+  // right side to where the loop started. Same winding either way.
+  const us = tailUs(p)
+  for (const u of us) line(-tailHalfWidth(p, u), -u)
+  line(0, -p.tail) // the tip itself, whatever the sampling did
+  for (let k = us.length - 1; k >= 0; k--) line(tailHalfWidth(p, us[k]), -us[k])
   return s
+}
+
+// --- the governor -----------------------------------------------------------
+
+// One rib/groove pair, at a fixed radius from the pivot. Angles are radians in
+// blade-local coordinates, measured CCW from the blade's own axis (+Y).
+export interface GovernorArc {
+  r: number // centre radius
+  grooveHalf: number // the groove runs +/- this about the axis
+  ribFrom: number // ...and the rib, which is the same arc shortened by `travel`
+  ribTo: number
+}
+
+export interface GovernorPlan {
+  depth: number // groove depth into the plate — and, at 45 degrees, its half-base
+  ribH: number // rib height above the plate — likewise its half-base
+  travel: number // radians of relative rotation one pair allows
+  arcs: GovernorArc[]
+  // Why `arcs` is empty, when it is. The two have different fixes — thicken the
+  // relief or the eye, against widen or lengthen the neck — so the UI has to be
+  // able to tell them apart rather than guess at one of them.
+  blocked: 'plate' | 'room' | null
+}
+
+// How far either side of the blade's axis an arc at radius `rc` can run before
+// its corners come within GOV_EDGE of the outline. Scanned rather than solved:
+// the outline is a sampled half-width profile with a waist and a flare in it, so
+// there is no closed form, and the binding corner swaps between the arc's inner
+// and outer edge depending where on the profile it sits.
+function grooveHalfSpan(p: BladeProfile, rc: number, hb: number): number {
+  const d = (0.25 * Math.PI) / 180
+  const clear = (t: number) => {
+    for (const r of [rc - hb, rc, rc + hb]) {
+      if (edgeInset(p, r * Math.sin(t), r * Math.cos(t)) < GOV_EDGE) return false
+    }
+    return true
+  }
+  if (!clear(0)) return 0
+  let th = 0
+  while (th + d < Math.PI / 2 && clear(th + d)) th += d
+  return th
+}
+
+// Resolve the governor: how deep, how tall, and which radii have room for a pair.
+//
+// TRAVEL IS THE ANGLE BETWEEN ADJACENT BLADES, not a control of its own — the
+// fan stops exactly where it was modelled to stand open, which is the same "one
+// quantity, one control" rule the eye thickness follows. Everything else is
+// derived: the groove leaves GOV_FLOOR of plate over it, the rib is the groove
+// less its fit clearance, and an arc is only built where the blade is wide
+// enough to leave a rib of GOV_MIN_RIB_DEG after the travel is taken out of it.
+//
+// Returns null only when there is nothing to govern — the governor is off, or
+// there is a single blade. A plan with no arcs and a `blocked` reason is the
+// other outcome, and it is what the UI reports.
+export function governorPlan(m: FanModel): GovernorPlan | null {
+  if (m.governor !== 'ribs') return null
+  const travel = bladeStepRad(m)
+  if (bladeCount(m) < 2 || travel <= 1e-6) return null
+  const plate = hubPlateThickness(m)
+  const depth = plate - Math.max(GOV_FLOOR, plate * 0.35)
+  const ribH = depth - GOV_FIT
+  if (ribH < GOV_MIN_RIB) return { depth, ribH, travel, arcs: [], blocked: 'plate' }
+  const p = bladeProfile(m)
+  const minRib = (GOV_MIN_RIB_DEG * Math.PI) / 180
+  // Inside: a flat bearing ring is left around the hole, since that annulus is
+  // what the blades actually pivot on. Outside: the arcs stay within the flat
+  // hub zone, because a groove under the relief would punch straight through it.
+  const rFirst = effPivotDiameter(m) / 2 + GOV_BEAR + depth
+  const rLast = reliefStartRadius(m) - depth
+  const arcs: GovernorArc[] = []
+  for (let rc = rFirst; rc <= rLast; rc += 4 * depth) {
+    const half = grooveHalfSpan(p, rc, depth)
+    if (2 * half < travel + minRib) continue
+    arcs.push({ r: rc, grooveHalf: half, ribFrom: travel - half, ribTo: half })
+  }
+  return { depth, ribH, travel, arcs, blocked: arcs.length ? null : 'room' }
+}
+
+// A solid swept along an arc about the pivot: `section` is a convex polygon in
+// (radius, z), swept from angle a0 to a1 (standard, CCW from +X) with flat
+// RADIAL end caps — which is what makes the stop a stop, since the rib's end
+// face then meets the groove's end face square.
+//
+// Manifold by construction: each quad between adjacent sections is two triangles
+// and each cap is a fan over the convex section, so the shell closes. Winding is
+// fixed afterwards from the signed volume rather than reasoned about, because it
+// flips with the sign of (a1 - a0).
+function arcSweep(
+  section: { r: number; z: number }[],
+  a0: number,
+  a1: number,
+): THREE.BufferGeometry {
+  const k = section.length
+  const rMax = Math.max(...section.map((q) => q.r))
+  const steps = Math.max(2, Math.ceil((Math.abs(a1 - a0) * rMax) / GOV_SEG))
+  const pos: number[] = []
+  for (let s = 0; s <= steps; s++) {
+    const a = a0 + ((a1 - a0) * s) / steps
+    const ca = Math.cos(a)
+    const sa = Math.sin(a)
+    for (const q of section) pos.push(q.r * ca, q.r * sa, q.z)
+  }
+  const idx: number[] = []
+  for (let s = 0; s < steps; s++) {
+    for (let i = 0; i < k; i++) {
+      const j = (i + 1) % k
+      idx.push(s * k + i, (s + 1) * k + j, s * k + j)
+      idx.push(s * k + i, (s + 1) * k + i, (s + 1) * k + j)
+    }
+  }
+  const e = steps * k
+  for (let i = 1; i < k - 1; i++) {
+    idx.push(0, i, i + 1)
+    idx.push(e, e + i + 1, e + i)
+  }
+  // A sweep with a1 < a0 comes out consistently inside-out, which Manifold
+  // rejects; the signed volume says so without having to reason about it.
+  let vol = 0
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t] * 3
+    const b = idx[t + 1] * 3
+    const c = idx[t + 2] * 3
+    vol +=
+      pos[a] * (pos[b + 1] * pos[c + 2] - pos[b + 2] * pos[c + 1]) +
+      pos[a + 1] * (pos[b + 2] * pos[c] - pos[b] * pos[c + 2]) +
+      pos[a + 2] * (pos[b] * pos[c + 1] - pos[b + 1] * pos[c])
+  }
+  if (vol < 0) {
+    for (let t = 0; t < idx.length; t += 3) {
+      const q = idx[t + 1]
+      idx[t + 1] = idx[t + 2]
+      idx[t + 2] = q
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  g.setIndex(idx)
+  g.computeVertexNormals()
+  return g
+}
+
+// The ribs standing on a blade's top face. Both flanks run at 45 degrees, so the
+// half-base equals the height and the ridge is a self-supporting peak. The base
+// is sunk GOV_EMBED into the plate: an additive part must overlap what it lands
+// on, never meet it coplanar.
+function governorRibs(m: FanModel, g: GovernorPlan): THREE.BufferGeometry[] {
+  const apex = hubPlateThickness(m) + g.ribH
+  const zBase = hubPlateThickness(m) - GOV_EMBED
+  const w = apex - zBase // the 45-degree flank, measured at the buried base
+  return g.arcs.map((a) =>
+    arcSweep(
+      [
+        { r: a.r - w, z: zBase },
+        { r: a.r + w, z: zBase },
+        { r: a.r, z: apex },
+      ],
+      Math.PI / 2 + a.ribFrom,
+      Math.PI / 2 + a.ribTo,
+    ),
+  )
+}
+
+// ...and the grooves they run in, cut from the blade's BOTTOM face. The section
+// is the same 45-degree V with a block hung under it, so subtracting it from the
+// trim prism opens the groove through the prism's own underside rather than
+// leaving a void buried inside it. Half-base is `depth`, which is GOV_FIT more
+// than the rib's — that difference is the whole running clearance.
+function governorGrooves(g: GovernorPlan, zBottom: number): THREE.BufferGeometry[] {
+  const d = g.depth
+  return g.arcs.map((a) =>
+    arcSweep(
+      [
+        { r: a.r - d, z: zBottom },
+        { r: a.r + d, z: zBottom },
+        { r: a.r + d, z: 0 },
+        { r: a.r, z: d },
+        { r: a.r - d, z: 0 },
+      ],
+      Math.PI / 2 - a.grooveHalf,
+      Math.PI / 2 + a.grooveHalf,
+    ),
+  )
 }
 
 // The trim tool, shared by every blade: the outline extruded past both faces,
@@ -535,12 +851,21 @@ function trimTool(m: FanModel, zTop: number): THREE.BufferGeometry {
   })
   prism.translate(0, 0, -1) // span z ∈ [-1, zTop+1], past both blade faces
   const tool = weld(prism)
+  const cuts: THREE.BufferGeometry[] = []
   const d = effPivotDiameter(m)
-  if (d < 0.5) return tool
-  const cyl = new THREE.CylinderGeometry(d / 2, d / 2, zTop + 6, 48)
-  cyl.rotateX(Math.PI / 2) // cylinder axis Y → Z (through the blade)
-  cyl.translate(0, 0, zTop / 2) // centred on the pivot, crossing both prism ends
-  return csgSubtract(tool, weld(cyl))
+  if (d >= 0.5) {
+    const cyl = new THREE.CylinderGeometry(d / 2, d / 2, zTop + 6, 48)
+    cyl.rotateX(Math.PI / 2) // cylinder axis Y → Z (through the blade)
+    cyl.translate(0, 0, zTop / 2) // centred on the pivot, crossing both prism ends
+    cuts.push(weld(cyl))
+  }
+  // The governor's grooves ride in the tool for the same reason the hole does:
+  // they are identical on every blade, so cutting them here costs one boolean
+  // for the whole fan instead of one per blade. Hung below the prism's own
+  // underside (-1) so the groove opens through the blade's back face.
+  const gov = governorPlan(m)
+  if (gov?.arcs.length) cuts.push(...governorGrooves(gov, -1.5))
+  return cuts.length ? csgSubtract(tool, ...cuts) : tool
 }
 
 // --- pivot hardware ---------------------------------------------------------
@@ -622,10 +947,8 @@ export interface FanFrame {
   cy: number
 }
 
-export function fanFrame(m: FanModel): FanFrame {
-  const p = bladeProfile(m)
+function fanBBox(m: FanModel, ys: number[], hwAt: (y: number) => number): FanFrame {
   const n = bladeCount(m)
-  const ys = [-p.r0, ...outlineYs(p)]
   let minX = Infinity
   let maxX = -Infinity
   let minY = Infinity
@@ -635,7 +958,7 @@ export function fanFrame(m: FanModel): FanFrame {
     const ca = Math.cos(a)
     const sa = Math.sin(a)
     for (const y of ys) {
-      const hw = silhouetteHalfWidth(p, y)
+      const hw = hwAt(y)
       for (const x of [hw, -hw]) {
         const X = x * ca - y * sa
         const Y = x * sa + y * ca
@@ -656,6 +979,24 @@ export function fanFrame(m: FanModel): FanFrame {
     cx: (minX + maxX) / 2,
     cy: (minY + maxY) / 2,
   }
+}
+
+export function fanFrame(m: FanModel): FanFrame {
+  const p = bladeProfile(m)
+  return fanBBox(m, [-p.r0, ...outlineYs(p)], (y) => frameHalfWidth(p, y))
+}
+
+// The assembled fan's TRUE footprint, tails included — what the object measures
+// and where it sits on the plate, as against `fanFrame`, which is where the
+// picture goes. The two are the same fan without a tail and deliberately differ
+// with one: a tail carries no relief, so it must not move the photograph, but it
+// very much does hang below the pivot and the preview has to stand on it.
+export function fanExtent(m: FanModel): FanFrame {
+  const p = bladeProfile(m)
+  const ys = [0, ...outlineYs(p)]
+  if (p.tail > 0) for (const u of tailUs(p)) ys.push(-u)
+  else for (let k = 1; k <= 12; k++) ys.push((-p.r0 * k) / 12)
+  return fanBBox(m, ys, (y) => silhouetteHalfWidth(p, y))
 }
 
 // How far out from the pivot adjacent blades still overlap each other. At radius
@@ -805,7 +1146,7 @@ export function fanLayout(m: FanModel): FanLayout {
   const items = n + (pv ? 1 : 0)
   const p = bladeProfile(m)
   const cw = 2 * p.hw + LAYOUT_GAP
-  const ch = p.L + p.r0 + LAYOUT_GAP
+  const ch = p.L + p.root + LAYOUT_GAP
   let cols = Math.min(items, Math.max(1, Math.floor((LAYOUT_MAX_W + LAYOUT_GAP) / cw)))
   const rows = Math.ceil(items / cols)
   cols = Math.ceil(items / rows) // even the rows out (10 items over 2 rows → 5 + 5)
@@ -815,7 +1156,7 @@ export function fanLayout(m: FanModel): FanLayout {
     x: -w / 2 + cw * (i % cols) + cw / 2,
     y: h / 2 - ch * Math.floor(i / cols) - ch / 2,
   })
-  const yc = (p.L - p.r0) / 2 // the blade's own centre along its axis
+  const yc = (p.L - p.root) / 2 // the blade's own centre along its axis
   const offsets: { x: number; y: number }[] = []
   for (let i = 0; i < n; i++) {
     const c = cell(i)
@@ -837,7 +1178,7 @@ export function fanOuterSize(m: FanModel): { x: number; y: number; z: number } {
   const pv = fanPivot(m)
   const p = hubPlateThickness(m)
   if (m.preview === 'assembled') {
-    const f = fanFrame(m)
+    const f = fanExtent(m)
     // The hub is the tallest thing in the assembled fan: the whole blade stack
     // plus the post flange under it and the screw head on top.
     const z = pv ? pv.totalH : (bladeCount(m) - 1) * p + maxT
@@ -860,7 +1201,7 @@ export function orientFanForPreview(built: BuiltFan, m: FanModel): BuiltFan {
     // relief — otherwise this render would show blades intersecting, because the
     // print would). Lifting by the frame's lowest point puts the fan on the
     // plate: for a wide spread the outermost blade dips below the pivot.
-    const lift = -fanFrame(m).minY
+    const lift = -fanExtent(m).minY
     const p = hubPlateThickness(m)
     const base = pv ? pv.flangeT : 0 // the stack sits on the post's flange
     built.blades.forEach((g, i) => {
@@ -931,11 +1272,12 @@ export function buildFan(m: FanModel): BuiltFan {
   const bw = m.borderWidth
   const rStart = reliefStartRadius(m)
 
-  // Grid extent: the blade's own bounding box plus the trim overshoot.
+  // Grid extent: the blade's own bounding box plus the trim overshoot. `root` is
+  // the eye cap or, when there is one, the whole tail below the pivot.
   const gx0 = -p.hw - MARGIN
   const gw = 2 * p.hw + 2 * MARGIN
-  const gy0 = -p.r0 - MARGIN
-  const gh = p.L + p.r0 + 2 * MARGIN
+  const gy0 = -p.root - MARGIN
+  const gh = p.L + p.root + 2 * MARGIN
 
   // Effective pitch, backed off if the requested one would blow the cell budget
   // across all the blades.
@@ -945,10 +1287,13 @@ export function buildFan(m: FanModel): BuiltFan {
   const dx = gw / (nx - 1)
   const dy = gh / (ny - 1)
 
-  // Every blade has the same outline and pivot hole, so the trim tool is built
-  // once and reused — one boolean per blade. The eye plate is the blade's
-  // thickest point (it has to clear the relief), so it sets the tool's height.
-  const tool = trimTool(m, Math.max(maxT, hubT))
+  // Every blade has the same outline, pivot hole and governor grooves, so the
+  // trim tool is built once and reused. The eye plate is the blade's thickest
+  // point (it has to clear the relief), and a governor rib stands proud of even
+  // that, so between them they set the tool's height.
+  const gov = governorPlan(m)
+  const tool = trimTool(m, Math.max(maxT, hubT + (gov?.arcs.length ? gov.ribH : 0)))
+  const ribs = gov?.arcs.length ? governorRibs(m, gov) : []
 
   const blades: THREE.BufferGeometry[] = []
   for (let i = 0; i < n; i++) {
@@ -1007,7 +1352,13 @@ export function buildFan(m: FanModel): BuiltFan {
     // manifold by construction and the CSG output is manifold, and welding a
     // trimmed relief grid fuses its pinch points into non-manifold edges. Verify
     // fan blades with the exact index-based edge test, not a quantized one.
-    blades.push(csgIntersect(heightfieldMesh(gx0, gy0, gw, gh, nx, ny, zAt), tool))
+    // Ribs are unioned BEFORE the trim so the tool clips them to the outline
+    // along with everything else. The topmost blade in the stack gets none: it
+    // has nothing above it to engage, and bare ridges on the outside of a
+    // closed fan are what you feel when you pick it up.
+    const grid = heightfieldMesh(gx0, gy0, gw, gh, nx, ny, zAt)
+    const solid = ribs.length && i < n - 1 ? csgAdd(grid, ...ribs) : grid
+    blades.push(csgIntersect(solid, tool))
   }
 
   return { blades, hardware: buildFanHardware(m), size: fanOuterSize(m) }
