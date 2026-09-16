@@ -90,24 +90,35 @@ export interface FanModel {
 export function defaultFan(): FanModel {
   return {
     image: null,
-    // Proportions taken off the commercial BTS fan (see the tonal-range note
-    // below), which is a much more elegant blade than the stubby one this used
-    // to default to: a long 4.8:1 blade on a neck pinched to ~0.29 of its width,
-    // so the eye reads as a boss and the fan closes to a slim stick. Its real
-    // dimensions, not merely its ratios: 133x28mm blades on an 8mm neck, eleven
-    // of them, giving a 262x140mm open fan — a concert fan rather than the
-    // 197mm one this used to default to.
+    // A 295x174mm open fan: eleven 150x35mm blades on a 9mm neck with a 24mm
+    // tail, spread 160°. Bigger than the commercial BTS fan these were taken
+    // off (262x140, 133x28mm blades) and deliberately no longer its exact
+    // proportions — 4.29:1 rather than 4.78:1, a neck at 0.257 of the width
+    // rather than 0.29. The reference is still where the SHAPE rules come from
+    // (the pinched neck, the late flare, the border rim, the tonal range); it is
+    // no longer where the numbers come from.
     //
-    // THE PLATE LAYOUT NO LONGER FITS A 256mm BED. It is 183x283mm, 27mm too
-    // deep, because the layout is two rows of (bladeLength + eye + gap) and a
-    // 133mm blade makes each row 143mm. Blade COUNT does not help — nine blades
-    // at this length are still 283mm deep — and one row of twelve items would
-    // be 324mm wide, so no arrangement of this fan fits a 256 bed. That is
-    // inherent to the size, and the reference has exactly the same problem: it
-    // ships as TWO plates, six items on one and five on the other. A single row
-    // is only 183x140mm, so a per-row split lands comfortably on a 256 bed if
-    // multi-plate export is ever built. Note `LAYOUT_MAX_W` bounds layout WIDTH
-    // only and does not protect against this.
+    // 160° with this blade is a real choice and not a return of the old bug.
+    // Blade count, spread, length and width are ONE CONSTRAINT APART: a 35mm
+    // blade at 150mm reaches its neighbour at 169° (`bladesMeetAtDeg`), so 160°
+    // sits INSIDE that and the blades overlap slightly rather than gapping.
+    // Measured on the assembled fan, 3.6% of blade area is buried by a
+    // neighbour, against 0.3% for the old 133x28 @150° and 0.3% for this blade
+    // opened right out to 169°. The reference itself runs ~2% buried at its
+    // natural angle, so this is well inside normal. What it buys is 297cm2 of
+    // live picture against the old 214cm2. Going the other way — past 169° —
+    // is the thing that breaks, because gaps are visible and burial is not.
+    //
+    // THE PLATE LAYOUT DOES NOT FIT A 256mm BED, and this size makes it worse:
+    // 149x528mm over THREE rows, where the old 133x28 blade gave 183x317mm over
+    // two. The jump is `LAYOUT_MAX_W` (220): a 35mm blade makes each cell 38mm
+    // wide, which fits 5 across, so 12 items wrap to 3 rows and then even out to
+    // 4 columns. Raising LAYOUT_MAX_W to ~240 would fit 6 across and put it back
+    // to two rows of 225x351mm — worth doing if multi-plate export is ever
+    // built, since a single row of six is then 225x174mm and lands on a 256 bed.
+    // Blade COUNT does not help; the reference has the same problem and ships as
+    // two plates. Note `LAYOUT_MAX_W` bounds layout WIDTH only, so nothing warns
+    // about the 528mm depth — check `fanLayout().h` by hand.
     //
     // The range is snapped to the layer height below, which is worth doing
     // because `ditherGrid` rounds the ends INWARD to whole layers: off-grid ends
@@ -122,29 +133,28 @@ export function defaultFan(): FanModel {
     // Re-snap the range if you change layer height; the controls step in 0.01
     // so it can be done exactly.
     blades: 11,
-    // 150°, not the 160° this used to be, because blade count, spread, length
-    // and width are ONE CONSTRAINT APART and 160° broke it: the blades only
-    // reach each other at ~149° (`bladesMeetAtDeg`), so a 160° fan stood open
-    // with wedge-shaped gaps between every pair — 15% of its area. Closing that
-    // by widening the blade instead would work, but it drags the silhouette off
-    // the reference proportions (4.4:1 rather than 4.8:1), and the reference
-    // solves it the other way: a 28mm blade opening to ~141°. Costs 6mm of fan
-    // width against 160°, since sin is flat up there.
-    spreadDeg: 150,
-    bladeLength: 133,
-    bladeWidth: 28,
-    neckWidth: 8,
+    // Under `bladesMeetAtDeg` (169°) — see above. This was 150° when the blade
+    // was 133x28, where 160° left wedge-shaped gaps across 15% of the fan; the
+    // blade is wider now, so the same angle lands on the overlapping side of
+    // the constraint instead. Re-check `bladesMeetAtDeg` if you touch length,
+    // width or blade count, because nothing in the geometry enforces it.
+    spreadDeg: 160,
+    bladeLength: 150,
+    bladeWidth: 35,
+    neckWidth: 9,
     neckLength: 29,
     // The pivot sits UP the blade, leaving a tail below it. Measured off the
-    // same reference fan: 158.3mm of blade with the hole 24.3mm from one end,
-    // so the 133mm above the pivot is `bladeLength` and this is the rest. The
+    // reference fan: 158.3mm of blade with the hole 24.3mm from one end, so the
+    // 133mm above the pivot was its `bladeLength` and this is the rest. Ours is
+    // a longer blade on the same tail, which is a deliberately shorter handle in
+    // proportion — the tail only has to be gripped, not to balance the blade. The
     // tails are what make the closed fan a stick you can hold, and in the open
     // fan they splay into the scalloped shell under the hub. The governor does
     // NOT need them — all its arcs are on the blade side — so 0 is a legitimate
     // setting that restores the plain round eye cap.
     //
     // It costs plate depth: `fanLayout` cells grow by this much, and the default
-    // layout is already 27mm too deep for a 256mm bed (see above).
+    // layout is already far too deep for a 256mm bed (see above).
     tailLength: 24,
     tip: 'petal',
     // The tonal range IS the picture's contrast: transmission through the relief
@@ -162,7 +172,10 @@ export function defaultFan(): FanModel {
     // flat plate anyway.
     governor: 'ribs',
     pivotStyle: 'screw',
-    pivotDiameter: 8,
+    // MIN_SCREW_PIVOT exactly — the smallest hole that can hold a printable
+    // thread inside a barrel that fits through it. Hence a 12.8mm eye (the hole
+    // plus 2x HUB_RING) and an M4.1x1.17 thread in the post.
+    pivotDiameter: 6.8,
     pitch: 0.35,
     invert: false,
     tone: 100,

@@ -132,11 +132,11 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     thread axis, since that's the only way threads print cleanly. Everything is
     already oriented — don't rotate anything in the slicer. 3MF keeps every part
     as a separate object; the STL is the whole plate as one mesh.
-  - **Plate size** — the default fan is a full-size 262mm one, and eleven 157mm
-    blades do not fit a 256mm bed in one go: the layout is 183 × 317mm. Either
-    print it in two batches (a single row is 183 × 159mm and fits comfortably) or
-    shorten the blades. The dimensions readout shows the layout size in the
-    **print layout** view.
+  - **Plate size** — the default fan is a full-size 295mm one, and eleven
+    174mm blades do not fit a 256mm bed in one go: the layout is 149 × 528mm,
+    three rows deep. Either print it a row at a time (a row is 149 × 174mm and
+    fits comfortably) or shorten and narrow the blades. The dimensions readout
+    shows the layout size in the **print layout** view.
 - **Gridfinity toggle** — switch the Gridfinity foot, baseplate clearance and
   magnet/screw sockets on or off. Off = a plain flat-bottomed tray. Independent
   of how the bin is sized.
