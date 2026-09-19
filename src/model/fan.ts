@@ -391,19 +391,38 @@ export function bladeCount(m: FanModel): number {
   return Math.max(1, Math.round(m.blades))
 }
 
-// Angle between adjacent blades in the open fan.
-export function bladeStepRad(m: FanModel): number {
-  const n = bladeCount(m)
-  return n < 2 ? 0 : ((m.spreadDeg * Math.PI) / 180) / (n - 1)
-}
-
 // Where blade `i` sits in the open fan: blade 0 at one edge of the spread, the
 // last at the other, fanned symmetrically about straight up (+Y).
+//
+// THE SIGN IS THE DIRECTION THE FAN OPENS. Blades stack in index order, blade 0
+// at the bottom and blade n-1 on top, so which end of the spread blade 0 takes
+// decides which way the blades lap and therefore which way the stack cascades
+// when you sweep it open. Descending (blade 0 up-LEFT, the top blade up-RIGHT)
+// is a clockwise-opening fan. The silhouette, the frame, the plate layout and
+// the photograph are all unaffected — it is the same set of angles handed out
+// in the other order — but the governor is NOT: see `bladeDeltaRad`.
 export function bladeAngle(m: FanModel, i: number): number {
   const n = bladeCount(m)
   if (n < 2) return 0
   const spread = (m.spreadDeg * Math.PI) / 180
-  return -spread / 2 + (i * spread) / (n - 1)
+  return spread / 2 - (i * spread) / (n - 1)
+}
+
+// The SIGNED change in blade angle from one blade to the next — the thing that
+// says which way the fan cascades. Read off `bladeAngle` rather than recomputed
+// from `spreadDeg`, so it can never disagree with the angles actually used.
+//
+// The governor needs the sign, because the rib parks at whichever end of the
+// groove the next blade rotates away from; a rib built for the wrong sign makes
+// the stack solid at one extreme and unstopped at the other, which looks
+// perfectly fine in the preview. Everything else wants the magnitude.
+export function bladeDeltaRad(m: FanModel): number {
+  return bladeCount(m) < 2 ? 0 : bladeAngle(m, 1) - bladeAngle(m, 0)
+}
+
+// Angle between adjacent blades in the open fan, unsigned.
+export function bladeStepRad(m: FanModel): number {
+  return Math.abs(bladeDeltaRad(m))
 }
 
 // --- blade silhouette -------------------------------------------------------
@@ -725,7 +744,8 @@ function grooveHalfSpan(p: BladeProfile, rc: number, hb: number): number {
 // other outcome, and it is what the UI reports.
 export function governorPlan(m: FanModel): GovernorPlan | null {
   if (m.governor !== 'ribs') return null
-  const travel = bladeStepRad(m)
+  const delta = bladeDeltaRad(m) // signed: which way the stack cascades
+  const travel = Math.abs(delta)
   if (bladeCount(m) < 2 || travel <= 1e-6) return null
   const plate = hubPlateThickness(m)
   const depth = plate - Math.max(GOV_FLOOR, plate * 0.35)
@@ -742,7 +762,16 @@ export function governorPlan(m: FanModel): GovernorPlan | null {
   for (let rc = rFirst; rc <= rLast; rc += 4 * depth) {
     const half = grooveHalfSpan(p, rc, depth)
     if (2 * half < travel + minRib) continue
-    arcs.push({ r: rc, grooveHalf: half, ribFrom: travel - half, ribTo: half })
+    // Blade i's rib shows up in blade i+1's frame at (its own angle - delta),
+    // which is 0 closed and -delta open, so the rib is the part of the groove
+    // that is inside it at BOTH — parked against the end the next blade turns
+    // away from, whichever end that is.
+    arcs.push({
+      r: rc,
+      grooveHalf: half,
+      ribFrom: Math.max(-half, delta - half),
+      ribTo: Math.min(half, delta + half),
+    })
   }
   return { depth, ribH, travel, arcs, blocked: arcs.length ? null : 'room' }
 }
