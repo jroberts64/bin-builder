@@ -11,6 +11,16 @@ import {
   thicknessForLuminance,
 } from './relief'
 import { THREAD, ThreadSpec, threadSpec, threadedRod } from './thread'
+import {
+  SOLE_FIT,
+  SOLE_GRIP,
+  SOLE_REACH_MULT,
+  SoleSpec,
+  buildSole,
+  soleFanToStand,
+  soleFits,
+  soleSize,
+} from './fanstand'
 
 // Lithophane fan: a hand fan whose blades are lithophane panels pivoting on a
 // common hub, so one photograph spans the whole fan when it's opened. MANY
@@ -48,6 +58,12 @@ export type FanPreview = 'assembled' | 'flat'
 //   'none' — no stop; the blades swing freely.
 export type FanGovernor = 'ribs' | 'none'
 
+// Whether a desk stand is generated alongside the fan.
+//   'sole' — a block with the blades' own tails subtracted out of it, so each
+//            one drops into its own slot (see `fanstand.ts`). Needs a tail.
+//   'none' — no stand.
+export type FanStandStyle = 'sole' | 'none'
+
 // How the blades are held together at the pivot.
 //   'screw' — a printed two-part barrel post + screw is generated and exported
 //             alongside the blades (see "the pivot screw" below). The blade hole
@@ -72,6 +88,7 @@ export interface FanModel {
   // deliberately thicker eye for strength. It can never go BELOW the relief (see
   // `hubPlateThickness`), so a value under the auto one would be a no-op.
   governor: FanGovernor // stop the fan opening past `spreadDeg`
+  standStyle: FanStandStyle // generate a desk stand for the open fan
   pivotStyle: FanPivotStyle // printed screw, or a plain hole for hardware
   pivotDiameter: number // mm, the hole through the blade eye
   pitch: number // mm per relief sample
@@ -171,6 +188,10 @@ export function defaultFan(): FanModel {
     // designed for, and the arcs cost nothing but a groove in a face that is
     // flat plate anyway.
     governor: 'ribs',
+    // Off by default, unlike the governor: a stand is furniture rather than
+    // part of the fan, and it has no business turning up on the plate of every
+    // design that predates it.
+    standStyle: 'none',
     pivotStyle: 'screw',
     // MIN_SCREW_PIVOT exactly — the smallest hole that can hold a printable
     // thread inside a barrel that fits through it. Hence a 12.8mm eye (the hole
@@ -205,6 +226,7 @@ export function defaultFan(): FanModel {
 export interface BuiltFan {
   blades: THREE.BufferGeometry[]
   hardware: THREE.BufferGeometry[] // [post, screw] with pivotStyle 'screw', else []
+  stand: THREE.BufferGeometry | null // the desk sole, when there is one
   size: { x: number; y: number; z: number }
 }
 
@@ -242,6 +264,95 @@ const BORDER_BLEND = 0.4
 // past this go to a second row, which keeps a 9-blade fan on one plate).
 const LAYOUT_GAP = 3
 const LAYOUT_MAX_W = 220
+
+// --- the desk stand ---------------------------------------------------------
+
+// Is there a sole to build? A stand grips the fan by its TAILS, so a fan with
+// no tail has nothing for it to hold — the eye is where every blade overlaps
+// every other, and a slot there would grip the whole stack as one lump.
+export function hasStand(m: FanModel): boolean {
+  return m.standStyle === 'sole' && bladeProfile(m).tail > 0
+}
+
+// The blade's outline, blade-local and closed, grown outward by `grow` and
+// truncated `yCap` up the blade.
+//
+// This is the WHOLE silhouette, not just the tail, and that is not belt and
+// braces: the stand's shoulders rise past the pivot to catch the outermost
+// tails, which dip barely 4mm below it, and at that height the outer blades'
+// own lower edges are already sweeping through the same space. Cutting only
+// the tails leaves the shoulders fouling the blades they are meant to clear.
+function bladeSlotOutline(
+  p: BladeProfile,
+  grow: number,
+  yCap: number,
+): { x: number; y: number }[] {
+  const down = (u: number) => {
+    if (p.tail <= 0) return Math.sqrt(Math.max(0, (p.r0 + grow) ** 2 - u * u))
+    if (u >= p.tailCap) return Math.sqrt(Math.max(0, (p.tailHW + grow) ** 2 - (u - p.tailCap) ** 2))
+    return tailHalfWidth(p, u) + grow
+  }
+  const uEnd = (p.tail > 0 ? p.tailCap + p.tailHW : p.r0) + grow
+  const N = 72
+  const ys: number[] = []
+  for (let k = 0; k <= N; k++) ys.push(-uEnd + (uEnd * k) / N)
+  for (let k = 1; k <= N; k++) ys.push((yCap * k) / N)
+  const right = ys.map((y) => ({ x: y < 0 ? down(-y) : halfWidthAt(p, Math.min(y, p.L)) + grow, y }))
+  const left = right
+    .slice()
+    .reverse()
+    .map((q) => ({ x: -q.x, y: q.y }))
+  return [...right, ...left]
+}
+
+// What the stand needs to know about this fan. `fanstand.ts` is deliberately
+// ignorant of FanModel, so everything it needs is resolved here — including the
+// silhouette, so the slot is cut from the same profile as the part going in it.
+function soleSpecFor(m: FanModel): SoleSpec {
+  const p = bladeProfile(m)
+  const plate = hubPlateThickness(m)
+  const pv = fanPivot(m)
+  const base = pv ? pv.flangeT : 0 // the stack sits on the post's flange
+  const n = bladeCount(m)
+  const tails: { angle: number; z: number }[] = []
+  for (let i = 0; i < n; i++) {
+    tails.push({ angle: bladeAngle(m, i), z: base + i * plate - SOLE_FIT })
+  }
+  return {
+    tails,
+    outline: bladeSlotOutline(p, SOLE_FIT, p.root * SOLE_REACH_MULT),
+    thickness: plate + 2 * SOLE_FIT,
+    reach: p.root,
+  }
+}
+
+// Outer size of the sole, or null when there is none. Cheap — no CSG — so the
+// plate layout can call it.
+export function fanStandSize(m: FanModel): { x: number; y: number; z: number } | null {
+  if (!hasStand(m)) return null
+  const spec = soleSpecFor(m)
+  return soleFits(spec) ? soleSize(spec) : null
+}
+
+function buildFanStand(m: FanModel): THREE.BufferGeometry | null {
+  return hasStand(m) ? buildSole(soleSpecFor(m)) : null
+}
+
+// Where a blade-local mesh has to be put to sit in the stand: its place in the
+// assembled fan, then the fan's place in the stand.
+export function bladeToStandMatrix(m: FanModel, i: number): THREE.Matrix4 | null {
+  if (!hasStand(m)) return null
+  const pv = fanPivot(m)
+  const base = pv ? pv.flangeT : 0
+  const inFan = new THREE.Matrix4()
+    .makeTranslation(0, 0, base + i * hubPlateThickness(m))
+    .multiply(new THREE.Matrix4().makeRotationZ(bladeAngle(m, i)))
+  return soleFanToStand(soleSpecFor(m)).multiply(inFan)
+}
+
+// How deep the stand is meant to hold each tail — the number the fit check
+// measures against.
+export const FAN_STAND_GRIP = SOLE_GRIP
 
 // --- the governor -----------------------------------------------------------
 // Concentric arc ribs on a blade's TOP face riding in matching arc grooves in
@@ -1178,6 +1289,7 @@ export interface FanLayout {
   h: number
   offsets: { x: number; y: number }[] // translation to apply to a blade-local mesh
   hardware: { x: number; y: number }[] // ...and to each pivot part, same order
+  stand: { x: number; y: number } | null // ...and the sole, which gets its own strip
 }
 
 export function fanLayout(m: FanModel): FanLayout {
@@ -1192,10 +1304,15 @@ export function fanLayout(m: FanModel): FanLayout {
   let cols = Math.min(items, Math.max(1, Math.floor((LAYOUT_MAX_W + LAYOUT_GAP) / cw)))
   const rows = Math.ceil(items / cols)
   cols = Math.ceil(items / rows) // even the rows out (10 items over 2 rows → 5 + 5)
-  const w = cols * cw - LAYOUT_GAP
-  const h = rows * ch - LAYOUT_GAP
+  const gridW = cols * cw - LAYOUT_GAP
+  const gridH = rows * ch - LAYOUT_GAP
+  // The sole is a chunky block, wider than a blade cell and a fraction as long,
+  // so it gets its own strip under the grid rather than a cell in it.
+  const sz = fanStandSize(m)
+  const w = Math.max(gridW, sz ? sz.x : 0)
+  const h = gridH + (sz ? LAYOUT_GAP + sz.y : 0)
   const cell = (i: number) => ({
-    x: -w / 2 + cw * (i % cols) + cw / 2,
+    x: -gridW / 2 + cw * (i % cols) + cw / 2,
     y: h / 2 - ch * Math.floor(i / cols) - ch / 2,
   })
   const yc = (p.L - p.root) / 2 // the blade's own centre along its axis
@@ -1210,7 +1327,8 @@ export function fanLayout(m: FanModel): FanLayout {
     const gap = pv.capD / 2 + 2
     hardware.push({ x: c.x, y: c.y - gap }, { x: c.x, y: c.y + gap })
   }
-  return { cols, rows, w, h, offsets, hardware }
+  const stand = sz ? { x: 0, y: h / 2 - gridH - LAYOUT_GAP - sz.y / 2 } : null
+  return { cols, rows, w, h, offsets, hardware, stand }
 }
 
 // Outer size in the VIEWPORT's axes (Y up), matching whichever pose the preview
@@ -1283,6 +1401,12 @@ export function orientFanForPreview(built: BuiltFan, m: FanModel): BuiltFan {
   }
   built.blades.forEach((g, i) => lay(g, l.offsets[i]))
   built.hardware.forEach((g, i) => lay(g, l.hardware[i]))
+  // The sole shows in the LAYOUT view only. Its slots are cut for a fan leaning
+  // back 8°, so putting it into the assembled view honestly would mean leaning
+  // the whole assembly and re-deriving the lift and the dims readout from the
+  // stand's base rather than the fan's — a bigger change than it looks, and the
+  // assembled view's job is framing the photograph, which the stand sits under.
+  if (built.stand && l.stand) lay(built.stand, l.stand)
   return built
 }
 
@@ -1299,6 +1423,7 @@ export function placeFanForPrint(built: BuiltFan, m: FanModel): BuiltFan {
   }
   built.blades.forEach((g, i) => move(g, l.offsets[i]))
   built.hardware.forEach((g, i) => move(g, l.hardware[i]))
+  if (built.stand && l.stand) move(built.stand, l.stand)
   return built
 }
 
@@ -1403,5 +1528,5 @@ export function buildFan(m: FanModel): BuiltFan {
     blades.push(csgIntersect(solid, tool))
   }
 
-  return { blades, hardware: buildFanHardware(m), size: fanOuterSize(m) }
+  return { blades, hardware: buildFanHardware(m), stand: buildFanStand(m), size: fanOuterSize(m) }
 }

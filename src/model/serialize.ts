@@ -23,6 +23,7 @@ import {
   FanPreview,
   FanPivotStyle,
   FanGovernor,
+  FanStandStyle,
   MIN_SCREW_PIVOT,
   defaultFan,
 } from './fan'
@@ -232,6 +233,7 @@ const FAN_TIPS: FanTip[] = ['petal', 'point', 'round']
 const FAN_PREVIEWS: FanPreview[] = ['assembled', 'flat']
 const FAN_PIVOTS: FanPivotStyle[] = ['screw', 'hole']
 const FAN_GOVERNORS: FanGovernor[] = ['ribs', 'none']
+const FAN_STANDS: FanStandStyle[] = ['sole', 'none']
 
 // Turn arbitrary parsed JSON into a guaranteed-valid FanModel. The blade profile
 // spans (neck / flare / tip) are re-clamped against each other inside
@@ -266,6 +268,7 @@ export function coerceFan(raw: unknown): FanModel {
     // A save predating the governor picks it up from the default, deliberately:
     // it is a fix, and the arcs are derived so they fit whatever that fan is.
     governor: oneOf(m.governor, FAN_GOVERNORS, d.governor),
+    standStyle: oneOf(m.standStyle, FAN_STANDS, d.standStyle),
     pivotStyle,
     pivotDiameter: num(
       m.pivotDiameter,

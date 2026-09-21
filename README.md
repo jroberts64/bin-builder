@@ -132,6 +132,15 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     thread axis, since that's the only way threads print cleanly. Everything is
     already oriented — don't rotate anything in the slicer. 3MF keeps every part
     as a separate object; the STL is the whole plate as one mesh.
+  - **Desk stand** — optionally print a holder to display the fan open. It's a
+    block with the fan's own tails cut out of it, so each blade drops into its
+    own slot. That's what holds the fan open: the pivot can't be tightened
+    enough to do it (by design — it has to keep turning), and every blade's
+    weight sits above the pivot, so left to itself the fan flops over. The
+    stand leans it back 8° and lifts out along that lean rather than straight
+    up, so a knock from above won't shift it. Nothing crosses a blade and the
+    back is completely clear, so a lamp or a window behind lights the picture.
+    Needs the blades to have a tail. Prints slots-up with no supports.
   - **Plate size** — the default fan is a full-size 295mm one, and eleven
     174mm blades do not fit a 256mm bed in one go: the layout is 149 × 528mm,
     three rows deep. Either print it a row at a time (a row is 149 × 174mm and
@@ -250,6 +259,7 @@ For a second project in the same AWS account, deploy `github-oidc.yaml` with
 | `src/model/litho.ts` | `LithoModel` + `buildLitho`: lithophane panel — shape, border rim, hanging hole, flat/standing placement |
 | `src/model/fan.ts` | `FanModel` + `buildFan`: lithophane fan — blade silhouette, the photo-across-the-open-fan mapping, border rim, the open-stop governor, pivot hardware, plate layout |
 | `src/model/thread.ts` | Printable helical screw threads for the fan's pivot post and screw |
+| `src/model/fanstand.ts` | The fan's desk stand: a block with the blades' own tails subtracted out, a slot each |
 | `src/model/csg.ts` | Manifold (WASM) add/subtract wrappers, async `initCSG()`, THREE↔Manifold conversion, vertex-weld helper |
 | `src/model/export.ts` | STL exporter + dependency-free 3MF (ZIP/OPC) and faceted-STEP writers |
 | `src/model/serialize.ts` | Versioned (de)serialization + input validation; `.json` and share-URL encoding. Single trusted-input boundary. |

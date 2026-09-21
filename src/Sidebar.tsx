@@ -35,7 +35,9 @@ import {
   fanLayout,
   fanOuterSize,
   fanPivot,
+  fanStandSize,
   governorPlan,
+  hasStand,
   hubDiameter,
   hubPlateThickness,
   overlapRadius,
@@ -1139,6 +1141,7 @@ function FanControls({
   const overlap = overlapRadius(model)
   const reliefStart = reliefStartRadius(model)
   const gov = governorPlan(model)
+  const standSz = fanStandSize(model)
   const tmpl = fanTemplate(model)
   const tips: { id: FanTip; label: string }[] = [
     { id: 'petal', label: 'Petal' },
@@ -1385,6 +1388,26 @@ function FanControls({
         </p>
       </Section>
 
+      <Section title="Desk stand">
+        <Toggle label="Print a stand to display it on" checked={model.standStyle === 'sole'}
+          onChange={(v) => patch({ standStyle: v ? 'sole' : 'none' })} />
+        <p className="hint">
+          {model.standStyle !== 'sole'
+            ? 'A block with the fan’s own tails cut out of it, so each blade drops into its own slot and the fan stands open on a desk. It needs a tail to grip.'
+            : model.tailLength <= 0
+              ? 'No tail to grip — the stand holds the fan by its tails, and at the pivot every blade overlaps every other, so a slot there would clamp the whole stack as one lump. Give the blades a tail above.'
+              : !standSz
+                ? 'The tail is too short for the stand to get a grip on it.'
+                : `${fmtLen(standSz.x)} x ${fmtLen(standSz.y)} x ${fmtLen(standSz.z)}, printed slots-up with no supports. Each blade drops into its own slot, which is what holds the fan open — the pivot can’t be tightened enough to do it, and every blade’s weight is above the pivot, so on its own the fan just flops over. It leans back 8°, and lifts out along its own lean rather than straight up, so a knock from above won’t shift it. Shown in the Print layout view.`}
+        </p>
+        {hasStand(model) && standSz && (
+          <p className="hint">
+            The back is left completely clear, so a lamp or a window behind the fan lights the
+            picture — which is the only way a lithophane reads.
+          </p>
+        )}
+      </Section>
+
       {/* 0.01 steps, not 0.1: thickness is matched to a whole number of layers
           (0.12mm layers want 0.36, not 0.4), and a coarser step also snaps the
           slider off the real value — at step 0.1 a 0.35mm relief showed 0.4 on
@@ -1438,7 +1461,7 @@ function FanControls({
       <Section title="General" defaultOpen>
         <Toggle label="Show Build Plate" checked={showBuildPlate} onChange={setShowBuildPlate} />
         <p className="hint">
-          {`Exported as ${n + (pv ? 2 : 0)} parts — ${n} blade${n === 1 ? '' : 's'}${pv ? ' plus the post and screw' : ''} — laid out ${layout.cols} × ${layout.rows} on the plate (${fmtNum(layout.w)} × ${fmtNum(layout.h)} mm). Blades lie flat on their backs with the relief up${pv ? `, and the two pivot parts stand on their thread axis, ${fmtNum(pv.flangeT + pv.barrelLen)} mm tall` : ''} — already oriented, don’t rotate anything in the slicer. 3MF keeps every part as a separate object; the STL is the whole plate as one mesh.`}
+          {`Exported as ${n + (pv ? 2 : 0) + (standSz ? 1 : 0)} parts — ${n} blade${n === 1 ? '' : 's'}${pv ? ', the post and screw' : ''}${standSz ? ' and the desk stand' : ''} — laid out ${layout.cols} × ${layout.rows} on the plate (${fmt1(layout.w)} × ${fmt1(layout.h)} mm). Blades lie flat on their backs with the relief up${pv ? `, and the two pivot parts stand on their thread axis, ${fmtNum(pv.flangeT + pv.barrelLen)} mm tall` : ''} — already oriented, don’t rotate anything in the slicer. 3MF keeps every part as a separate object; the STL is the whole plate as one mesh.`}
         </p>
         {pv && (
           <p className="hint">
@@ -1677,4 +1700,7 @@ const clamp = (v: number, min: number, max: number) =>
 // Round to 3 decimals and stringify, so float noise (e.g. 0.333*100) doesn't
 // show as "33.30000000000001" in the input.
 const fmtNum = (n: number) => String(Math.round(n * 1000) / 1000)
+// Plate sizes to 0.1mm. fmtNum's 3dp is right for thread pitches and wrong for
+// a bed dimension, which reads as noise at "565.638 mm".
+const fmt1 = (n: number) => String(Math.round(n * 10) / 10)
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)

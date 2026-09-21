@@ -89,7 +89,7 @@ export function exportLitho3MF(model: LithoModel, meta?: string): Blob {
 
 function fanExportGeometries(model: FanModel): THREE.BufferGeometry[] {
   const built = placeFanForPrint(buildFan(model), model)
-  return [...built.blades, ...built.hardware]
+  return [...built.blades, ...built.hardware, ...(built.stand ? [built.stand] : [])]
 }
 
 // A fan is many parts, but they are all printed together on one plate, and a

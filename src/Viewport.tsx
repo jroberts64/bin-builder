@@ -145,6 +145,9 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
             )
             // The pivot parts in a contrasting tone — they read as hardware.
             fan.hardware.forEach((h) => group.add(new THREE.Mesh(h, mat(0xf0a24a))))
+            // The desk sole, when there is one — layout view only (see
+            // `orientFanForPreview`), in its own tone again.
+            if (fan.stand) group.add(new THREE.Mesh(fan.stand, mat(0x9aa7b8)))
             break
           }
           default:
