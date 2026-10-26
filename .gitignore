@@ -6,3 +6,4 @@ dist
 # Loose screenshots dropped in the repo root (scratch / verification captures).
 # Intentional images can still be tracked from a subfolder (e.g. assets/, public/).
 /*.png
+.superpowers/
