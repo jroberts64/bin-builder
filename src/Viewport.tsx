@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { buildBin } from './model/geometry'
 import { buildBox } from './model/box'
 import { buildSkadis } from './model/skadis'
@@ -109,6 +110,13 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
 
     const mat = (color: number) =>
       new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05 })
+    // CSG output is indexed, with vertices shared across sharp edges, so its
+    // smooth vertex normals average across every crease: a 1mm texture rib or
+    // a wall corner renders as a soft bump and textures look blobby. Display
+    // the CSG solids with creased normals instead (smooth only below 30°, so
+    // 24-segment cylinders still read round). Preview-only; exports are
+    // untouched. The relief types keep their smooth heightfield shading.
+    const solid = (g: THREE.BufferGeometry) => toCreasedNormals(g, Math.PI / 6)
 
     const rebuild = () => {
       disposeParts()
@@ -116,17 +124,17 @@ export default function Viewport({ design, showBuildPlate, fitSignal, ready }: P
       try {
         switch (design.type) {
           case 'bin':
-            group.add(new THREE.Mesh(buildBin(design.bin).geometry, mat(0x4a9eff)))
+            group.add(new THREE.Mesh(solid(buildBin(design.bin).geometry), mat(0x4a9eff)))
             break
           case 'box': {
             const { box, lid } = buildBox(design.box)
-            group.add(new THREE.Mesh(box, mat(0x4a9eff)))
+            group.add(new THREE.Mesh(solid(box), mat(0x4a9eff)))
             // Lid slightly lighter so it's distinguishable in the assembled view.
-            group.add(new THREE.Mesh(lid, mat(0x8ec5ff)))
+            group.add(new THREE.Mesh(solid(lid), mat(0x8ec5ff)))
             break
           }
           case 'skadis':
-            group.add(new THREE.Mesh(buildSkadis(design.skadis).geometry, mat(0x4a9eff)))
+            group.add(new THREE.Mesh(solid(buildSkadis(design.skadis).geometry), mat(0x4a9eff)))
             break
           case 'litho': {
             // Preview in the chosen print orientation, so what you see is what

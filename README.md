@@ -20,8 +20,10 @@ you can change the grid pitch or switch to fully freeform millimetre dimensions.
     with an overlapping lip + snap bead. Exports as one combined object.
     Hinge/knuckle clearances follow FDM best practice (~0.25mm pin gap).
   - **Surface texture** — ridges, knurl, hex or dots on the **lid top** and on
-    the **outer walls**, each with its own pattern, depth and spacing, raised or
-    recessed. The print rules are built in: a hinged lid's top prints against the
+    the **outer walls**, each with its own pattern and a single **size** knob
+    (feature widths and depth scale together, in proportions tuned to read as
+    texture rather than scattered studs), raised or recessed. The print rules
+    are built in: a hinged lid's top prints against the
     plate, so it is recessed only, in whole layers, with at least half the face
     left flat and a solid border so it still sticks; walls stay clear of the
     lid's lip and the hinge; the sliding lid prints face-up and takes either.

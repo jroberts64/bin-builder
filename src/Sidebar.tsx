@@ -16,6 +16,7 @@ import {
   TEXTURE,
   TEXTURE_PATTERNS,
   PATTERNS,
+  maxPitch,
   minPitch,
   resolveTexture,
   textureDepthLimit,
@@ -603,10 +604,10 @@ function BoxControls({
   )
 }
 
-// One texture spec: pattern / relief / depth / pitch / direction. The face's
-// print context decides what is allowed, and the effective values in the hint
-// come from the same resolveTexture() the builder uses, so they never disagree
-// with the geometry.
+// One texture spec: pattern / relief / size / direction. Size (the pitch) is
+// the only dimension — feature widths and depth are fixed ratios of it — and
+// the effective values in the hint come from the same resolveTexture() the
+// builder uses, so they never disagree with the geometry.
 function TextureControls({ spec, onChange, ctx, thickness, layerHeight, ridgeLabels }: {
   spec: TextureSpec
   onChange: (s: TextureSpec) => void
@@ -623,6 +624,8 @@ function TextureControls({ spec, onChange, ctx, thickness, layerHeight, ridgeLab
   const minDepth = snaps ? layerHeight : TEXTURE.MIN_DEPTH
   const active = spec.pattern !== 'none'
   const resolved = resolveTexture(spec, ctx, thickness, layerHeight)
+  const pMin = minPitch(spec.pattern)
+  const pMax = maxPitch(spec.pattern, ctx)
 
   return (
     <>
@@ -657,14 +660,15 @@ function TextureControls({ spec, onChange, ctx, thickness, layerHeight, ridgeLab
               </div>
             </Field>
           )}
-          <Field label={mode === 'emboss' ? 'Height' : 'Depth'}>
-            <NumberInput value={clamp(spec.depth, minDepth, maxDepth)} min={minDepth} max={maxDepth}
-              step={snaps ? layerHeight : 0.1} unit="mm" onChange={(v) => patch({ depth: v })} />
+          <Field label="Size">
+            <NumberInput value={clamp(spec.pitch, pMin, pMax)} min={pMin} max={pMax}
+              step={0.5} unit="mm" onChange={(v) => patch({ pitch: v })} />
           </Field>
-          <Field label="Spacing (pitch)">
-            <NumberInput value={spec.pitch} min={minPitch(spec.pattern)} max={TEXTURE.MAX_PITCH} step={0.5}
-              unit="mm" onChange={(v) => patch({ pitch: v })} />
-          </Field>
+          {pMax < TEXTURE.MAX_PITCH && spec.pitch >= pMax && (
+            <p className="hint">
+              {`Stops at ${fmtNum(pMax)} mm on this face: any larger and a recess would be wider than ${TEXTURE.MAX_SPAN} mm, too far for the layer above to bridge.`}
+            </p>
+          )}
           {spec.pattern === 'ridges' && (
             <Field label="Direction">
               <div className="seg">
@@ -691,10 +695,10 @@ function describeTexture(r: ResolvedTexture): string {
   const what =
     r.pattern === 'ridges' ? `${f} mm ${raised ? 'ridges' : 'grooves'} with ${gap} mm flats between`
     : r.pattern === 'knurl' ? `${f} mm ${raised ? 'bars' : 'grooves'} crossed at 45°, ${fmtNum(r.pitch)} mm apart`
-    : r.pattern === 'hex' ? `${f} mm hexagonal ${raised ? 'bosses' : 'pockets'} with ${gap} mm walls`
+    : r.pattern === 'hex' ? (raised ? `${f} mm hex tiles with ${gap} mm gaps` : `${f} mm hex pockets with ${gap} mm walls`)
     : `${f} mm ${raised ? 'studs' : 'dimples'}, ${gap} mm apart`
   const layers = r.layers === null ? '' : ` (${r.layers} layer${r.layers === 1 ? '' : 's'})`
-  return `${what}, ${fmtNum(r.depth)} mm ${raised ? 'high' : 'deep'}${layers}. ${Math.round(r.plateau * 100)}% of the face stays flat.`
+  return `${what}, ${fmtNum(r.depth)} mm ${raised ? 'high' : 'deep'}${layers}. Widths and depth scale with the size. ${Math.round(r.plateau * 100)}% of the face stays flat.`
 }
 
 // ---------- Skadis-holder controls ----------

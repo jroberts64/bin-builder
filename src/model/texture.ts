@@ -15,6 +15,13 @@ import { csgAdd, csgSubtract, weld } from './csg'
 // the same functions to show the effective values. The constraints are about
 // how a face prints, so each region is applied with a TextureContext:
 //
+//
+// A pattern has ONE size control, its pitch. Everything else — feature width,
+// the gap between features, the relief depth — is a fixed ratio of it (PATTERNS
+// and DEPTH_RATIO), so turning the knob scales the whole pattern uniformly
+// instead of spreading the same small features further apart. The print rules
+// below only clamp those ratios where a face actually needs it.
+//
 //   'top-up'   the face prints facing up (sliding lid top). Raised or recessed;
 //              heights snap to whole layers because the relief IS the layer
 //              stack.
@@ -40,8 +47,7 @@ export const TEXTURE_MODES: TextureMode[] = ['emboss', 'deboss']
 export interface TextureSpec {
   pattern: TexturePattern
   mode: TextureMode // raised or recessed; forced to 'deboss' on a bed-facing lid
-  depth: number // mm requested — the built depth is clamped per face (see textureDepthLimit)
-  pitch: number // mm, centre-to-centre feature spacing
+  pitch: number // mm, centre-to-centre feature spacing — THE size knob; widths and depth follow from it
   angle: RidgeAngle // ridges only: 0 = along the face's u axis (side-to-side / horizontal), 90 = across
 }
 
@@ -53,8 +59,8 @@ export interface BoxTexture {
 
 export function defaultBoxTexture(): BoxTexture {
   return {
-    top: { pattern: 'none', mode: 'emboss', depth: 0.6, pitch: 4.5, angle: 0 },
-    sides: { pattern: 'none', mode: 'deboss', depth: 0.6, pitch: 4.5, angle: 0 },
+    top: { pattern: 'none', mode: 'emboss', pitch: 5, angle: 0 },
+    sides: { pattern: 'none', mode: 'deboss', pitch: 5, angle: 0 },
     layerHeight: 0.2,
   }
 }
@@ -65,17 +71,26 @@ export const TEXTURE = {
   // plate-facing faces and keeps the pattern off edges, the lid lip roots, the
   // sliding lid's tongue chamfers and the snap-on lid's knuckle arms.
   BORDER: 3,
-  // Narrowest plateau / bar / cell wall. First-layer squish blurs anything
-  // finer on a plate-facing face; on a wall it is ~2 extrusion widths.
+  // Narrowest plateau / bar / cell wall, and narrowest gap between features.
+  // First-layer squish blurs anything finer on a plate-facing face; on a wall
+  // it is ~2 extrusion widths.
   MIN_FEATURE: 1,
-  // Widest single recess: on a plate-facing face the layer above must bridge
-  // it, and 5mm bridges cleanly. Applied to raised features too for symmetry.
+  // Widest single recess on a plate-facing face: the layer above must bridge
+  // it, and 5mm bridges cleanly. Nothing bridges anywhere else (a face-up
+  // pocket has a floor; a wall recess is a ≤1mm overhang), so only the
+  // bed-face is held to it.
   MAX_SPAN: 5,
-  // Share of a plate-facing face that must stay on the plate. The duty ratios
-  // in PATTERNS are chosen so every pattern satisfies this at every pitch.
+  // Share of a plate-facing face that must stay on the plate. Bed-face only —
+  // featureSize() caps each pattern's duty to keep it.
   MIN_PLATEAU: 0.5,
   MIN_PITCH: 3,
   MAX_PITCH: 12,
+  // Relief depth as a share of the pitch. With the PATTERNS duties this is the
+  // proportion that reads as texture: measured over 0.2–1.4mm at a 4.5mm
+  // pitch, 0.2–0.4 vanishes under raking light and past ~1mm the pockets read
+  // as a dark grille. 1/6 lands at 0.75 → 0.8mm there. Clamped per face by
+  // textureDepthLimit and snapped to layers on horizontal faces.
+  DEPTH_RATIO: 1 / 6,
   MAX_TOP_EMBOSS: 2, // raised relief on a face-up lid
   MAX_BED_RECESS: 1, // recess into a plate-facing lid top
   MAX_WALL_DEPTH: 1, // raised or recessed on a vertical wall
@@ -87,43 +102,76 @@ export const TEXTURE = {
 } as const
 
 // Per-pattern geometry. `duty` is the feature's share of the pitch (bar width,
-// hex across-flats or dot diameter = duty × pitch), sized so the flat left
-// between features is ≥ MIN_FEATURE at minPitch and the plateau fraction is
-// ≥ MIN_PLATEAU everywhere — see plateauFraction() for the per-pattern area
-// formula. Defaults (4.5mm pitch) give ridges a 1.6mm groove and a 2.9mm flat.
+// hex across-flats or dot diameter = duty × pitch): the IDEAL proportion, which
+// featureSize() then clamps to the print rules. The values come from rendering
+// each pattern across a sweep of duties and judging them by eye, and the rule
+// that fell out is that a pattern reads as a SURFACE when the ground between
+// features is no wider than the features themselves — the old duties (ridges
+// 0.35, hex 0.65, dots 0.6) left 35–65% of the face as flat field between
+// small features, which reads as studs scattered on a plate. So: tiles
+// (hex, knurl) get thin grout, ridges are half-and-half, dots sit close.
 export interface PatternInfo {
   label: string
   minPitch: number
   duty: number
 }
 export const PATTERNS: Record<Exclude<TexturePattern, 'none'>, PatternInfo> = {
-  // bar = 35% of pitch → 65% flat. 3mm pitch → 1.05mm bar, 1.95mm flat.
-  ridges: { label: 'Ridges', minPitch: 3, duty: 0.35 },
-  // two bar sets crossed at ±45°; union covers 1 − (1 − 0.25)² = 44% → 56% flat.
-  // 4mm minimum keeps the bars at ≥ 1mm and the diamond islands at 3mm.
-  knurl: { label: 'Knurl', minPitch: 4, duty: 0.25 },
-  // across-flats = 65% of pitch → area (0.65)² = 42% → 58% flat; cell walls are
-  // 35% of pitch, ≥ 1.05mm at 3mm.
-  hex: { label: 'Hex', minPitch: 3, duty: 0.65 },
-  // diameter = 60% of pitch on a hex lattice → area 0.907·0.36 = 33% → 67% flat;
-  // gaps are 40% of pitch, ≥ 1.2mm at 3mm.
-  dots: { label: 'Dots', minPitch: 3, duty: 0.6 },
+  // bar = flat, the classic reeded proportion. Exactly MIN_PLATEAU on the
+  // bed-face, so it needs no cap there.
+  ridges: { label: 'Ridges', minPitch: 3, duty: 0.5 },
+  // two bar sets crossed at ±45°, bars narrow so the diamonds dominate. At
+  // every pitch below 4.5mm the bar is held at MIN_FEATURE instead; 3.5mm is
+  // the smallest pitch where that 1mm bar still leaves (1 − 1/3.5)² = 51% on
+  // the plate.
+  knurl: { label: 'Knurl', minPitch: 3.5, duty: 0.22 },
+  // across-flats = 85% of pitch: a honeycomb (recessed) or hex tiles (raised)
+  // with thin walls. The wall is MIN_FEATURE below a 6.7mm pitch. On the
+  // bed-face the pockets are capped at √0.5 of the pitch (50% area), so the
+  // walls there are ~29% of the pitch.
+  hex: { label: 'Hex', minPitch: 3, duty: 0.85 },
+  // diameter = 70% of pitch on a hex lattice → 44% coverage, 56% flat, so it
+  // needs no cap on the bed-face either.
+  dots: { label: 'Dots', minPitch: 3, duty: 0.7 },
 }
 
 export function minPitch(pattern: TexturePattern): number {
   return pattern === 'none' ? TEXTURE.MIN_PITCH : PATTERNS[pattern].minPitch
 }
 
-// Feature size (bar width / hex across-flats / dot diameter) for a pitch. The
-// MAX_SPAN clamp only ever lowers coverage; the MIN_FEATURE clamp never bites
-// inside the allowed pitch range (duty × minPitch ≥ 1 for every pattern).
-export function featureSize(pattern: Exclude<TexturePattern, 'none'>, pitch: number): number {
-  return clamp(PATTERNS[pattern].duty * pitch, TEXTURE.MIN_FEATURE, TEXTURE.MAX_SPAN)
+// Largest pitch a face takes for a pattern. On the bed-face the recess grows
+// with the pitch until MAX_SPAN stops it, and past that point featureSize would
+// hold the feature at 5mm while the spacing kept growing — exactly the sparse
+// studs-on-a-plate look the duties exist to avoid (hex at 12mm would be 83%
+// bare). So the knob stops there instead, rounded down to 0.5mm, and the
+// proportions hold all the way: ridges 10mm, hex and dots 7mm, knurl (whose
+// recess is the narrow bar) the full range.
+export function maxPitch(pattern: TexturePattern, ctx: TextureContext): number {
+  if (pattern === 'none' || ctx !== 'bed-face') return TEXTURE.MAX_PITCH
+  const d = Math.min(PATTERNS[pattern].duty, maxBedDuty(pattern))
+  return Math.min(TEXTURE.MAX_PITCH, Math.floor((2 * TEXTURE.MAX_SPAN) / d) / 2)
 }
 
-// Fraction of the face left flat (on the plate, for a bed-facing recess).
-export function plateauFraction(pattern: Exclude<TexturePattern, 'none'>, pitch: number): number {
-  const d = featureSize(pattern, pitch) / pitch
+// Feature size (bar width / hex across-flats / dot diameter) for a pitch on a
+// face: the pattern's duty, held so the gap between features stays at least
+// MIN_FEATURE, and on the bed-face no wider than MAX_SPAN nor covering more
+// than 1 − MIN_PLATEAU of the face. Finally never thinner than MIN_FEATURE;
+// each pattern's minPitch is set so that floor never undoes the plateau cap.
+export function featureSize(
+  pattern: Exclude<TexturePattern, 'none'>,
+  pitch: number,
+  ctx: TextureContext,
+): number {
+  let f = Math.min(PATTERNS[pattern].duty * pitch, pitch - TEXTURE.MIN_FEATURE)
+  if (ctx === 'bed-face') f = Math.min(f, TEXTURE.MAX_SPAN, maxBedDuty(pattern) * pitch)
+  return Math.max(f, TEXTURE.MIN_FEATURE)
+}
+
+// Share of a hex lattice's area covered by its dots, per (diameter/pitch)².
+const DOT_AREA = Math.PI / (2 * Math.sqrt(3))
+
+// Fraction of the face left flat (on the plate, for a bed-facing recess), for
+// a duty d = feature / pitch.
+export function plateauFraction(pattern: Exclude<TexturePattern, 'none'>, d: number): number {
   switch (pattern) {
     case 'ridges':
       return 1 - d
@@ -132,7 +180,23 @@ export function plateauFraction(pattern: Exclude<TexturePattern, 'none'>, pitch:
     case 'hex':
       return 1 - d * d
     case 'dots':
-      return 1 - (Math.PI / (2 * Math.sqrt(3))) * d * d
+      return 1 - DOT_AREA * d * d
+  }
+}
+
+// plateauFraction() solved for d at MIN_PLATEAU: the largest duty that still
+// leaves enough of a plate-facing face on the plate.
+function maxBedDuty(pattern: Exclude<TexturePattern, 'none'>): number {
+  const P = TEXTURE.MIN_PLATEAU
+  switch (pattern) {
+    case 'ridges':
+      return 1 - P
+    case 'knurl':
+      return 1 - Math.sqrt(P)
+    case 'hex':
+      return Math.sqrt(1 - P)
+    case 'dots':
+      return Math.sqrt((1 - P) / DOT_AREA)
   }
 }
 
@@ -153,10 +217,10 @@ export function textureDepthLimit(ctx: TextureContext, mode: TextureMode, thickn
 }
 
 // What actually gets built for a spec on a given face: the mode the face
-// allows, the depth clamped to the face's limit (and snapped to whole layers on
-// horizontal faces), the pitch clamped to the pattern's range, and the derived
-// feature size. null = nothing to build (pattern off, or the face is too thin
-// for even one layer).
+// allows, the pitch clamped to the pattern's range on that face, and the
+// feature size and depth derived from it — the depth clamped to the face's
+// limit (and snapped to whole layers on horizontal faces). null = nothing to
+// build (pattern off, or the face is too thin for even one layer).
 export interface ResolvedTexture {
   pattern: Exclude<TexturePattern, 'none'>
   mode: TextureMode
@@ -178,8 +242,9 @@ export function resolveTexture(
   if (spec.pattern === 'none') return null
   const pattern = spec.pattern
   const mode: TextureMode = ctx === 'bed-face' ? 'deboss' : spec.mode
+  const pitch = clamp(spec.pitch, minPitch(pattern), maxPitch(pattern, ctx))
   const maxDepth = textureDepthLimit(ctx, mode, thickness)
-  let depth = Math.min(spec.depth, maxDepth)
+  let depth = Math.min(pitch * TEXTURE.DEPTH_RATIO, maxDepth)
   let layers: number | null = null
   if (ctx !== 'wall') {
     // Horizontal face: the relief is the layer stack, so model what will print.
@@ -191,13 +256,13 @@ export function resolveTexture(
     layers = n
   }
   if (depth < TEXTURE.MIN_DEPTH - 1e-9) return null
-  const pitch = clamp(spec.pitch, minPitch(pattern), TEXTURE.MAX_PITCH)
-  const feature = featureSize(pattern, pitch)
-  const plateau = plateauFraction(pattern, pitch)
-  // Guaranteed by the duty table; kept as the guard for the invariant so a bad
-  // edit to PATTERNS fails safe (no texture) instead of printing a part that
-  // barely touches the plate.
-  if (plateau < TEXTURE.MIN_PLATEAU) return null
+  const feature = featureSize(pattern, pitch, ctx)
+  const plateau = plateauFraction(pattern, feature / pitch)
+  // Guaranteed by featureSize's cap and the minPitch table; kept as the guard
+  // for the invariant so a bad edit to PATTERNS fails safe (no texture) instead
+  // of printing a part that barely touches the plate. (The cap can land
+  // exactly ON the limit, hence the tolerance.)
+  if (ctx === 'bed-face' && plateau < TEXTURE.MIN_PLATEAU - 1e-9) return null
   return { pattern, mode, depth, layers, pitch, feature, angle: spec.angle, plateau, maxDepth }
 }
 
@@ -344,15 +409,18 @@ function knurlIslands(w: number, h: number, f: number, pitch: number): Poly[] {
   return out
 }
 
-// Parallel bars centred on the region, only those that fit whole — a bar
-// clipped at the border would be a sub-MIN_FEATURE sliver of groove.
+// Parallel bars centred on the region, as many as fit whole — a bar clipped at
+// the border would be a sub-MIN_FEATURE sliver of groove. Odd or even count,
+// whichever fits more, so the margin at each end is under half a pitch rather
+// than up to a whole one (which reads as a missing ridge).
 function ridgePolys(w: number, h: number, f: number, pitch: number, angle: RidgeAngle): Poly[] {
   const span = angle === 0 ? h : w // extent across the bars
-  const K = Math.floor((span / 2 - f / 2) / pitch)
   const out: Poly[] = []
-  if (K < 0) return out
-  for (let k = -K; k <= K; k++) {
-    const c = span / 2 + k * pitch
+  if (span < f) return out
+  const n = Math.floor((span - f) / pitch) + 1
+  const first = span / 2 - ((n - 1) * pitch) / 2
+  for (let k = 0; k < n; k++) {
+    const c = first + k * pitch
     const lo = c - f / 2
     const hi = c + f / 2
     out.push(angle === 0 ? [[0, lo], [w, lo], [w, hi], [0, hi]] : [[lo, 0], [hi, 0], [hi, h], [lo, h]])
@@ -360,24 +428,38 @@ function ridgePolys(w: number, h: number, f: number, pitch: number, angle: Ridge
   return out
 }
 
-// A template polygon stamped at every point of a hex lattice (rows pitch·√3/2
-// apart, alternate rows offset half a pitch) centred on the region; only cells
-// wholly inside the region are kept.
+// A template polygon (symmetric about its origin) stamped at every point of a
+// hex lattice — rows pitch·√3/2 apart, alternate rows offset half a pitch —
+// keeping only cells wholly inside the region. The lattice is tried at four
+// phases and the one that fits the most cells wins, then the kept block is
+// re-centred so opposite margins match: a lattice simply pinned to the region
+// centre leaves one side up to a pitch wider than the other, which is the
+// first thing the eye finds on a textured lid.
 function cellPolys(w: number, h: number, pitch: number, template: Poly): Poly[] {
   const rowH = (pitch * Math.sqrt(3)) / 2
+  const rx = Math.max(...template.map((p) => Math.abs(p[0])))
+  const ry = Math.max(...template.map((p) => Math.abs(p[1])))
   const J = Math.ceil(h / rowH / 2) + 1
   const I = Math.ceil(w / pitch / 2) + 1
-  const out: Poly[] = []
-  for (let j = -J; j <= J; j++) {
-    const cy = h / 2 + j * rowH
-    const xOff = j % 2 !== 0 ? pitch / 2 : 0
-    for (let i = -I; i <= I; i++) {
-      const cx = w / 2 + i * pitch + xOff
-      const poly: Poly = template.map(([x, y]) => [cx + x, cy + y])
-      if (poly.every(([x, y]) => x >= 0 && x <= w && y >= 0 && y <= h)) out.push(poly)
+  let best: [number, number][] = []
+  for (const [px, py] of [[0, 0], [pitch / 2, 0], [0, rowH / 2], [pitch / 2, rowH / 2]]) {
+    const centres: [number, number][] = []
+    for (let j = -J; j <= J; j++) {
+      const cy = h / 2 + py + j * rowH
+      const xOff = j % 2 !== 0 ? pitch / 2 : 0
+      for (let i = -I; i <= I; i++) {
+        const cx = w / 2 + px + i * pitch + xOff
+        if (cx - rx >= 0 && cx + rx <= w && cy - ry >= 0 && cy + ry <= h) centres.push([cx, cy])
+      }
     }
+    if (centres.length > best.length) best = centres
   }
-  return out
+  if (best.length === 0) return []
+  const xs = best.map((c) => c[0])
+  const ys = best.map((c) => c[1])
+  const dx = w / 2 - (Math.min(...xs) + Math.max(...xs)) / 2
+  const dy = h / 2 - (Math.min(...ys) + Math.max(...ys)) / 2
+  return best.map(([cx, cy]) => template.map(([x, y]) => [cx + dx + x, cy + dy + y] as [number, number]))
 }
 
 // Pointy-top hexagon with the given across-flats width (flats face ±u), so a
@@ -393,8 +475,10 @@ function hexPoly(acrossFlats: number): Poly {
   return out
 }
 
+// Facets ~0.5mm long (a multiple of 4, at least 16), so a large dot stays round
+// instead of showing its polygon.
 function circlePoly(diameter: number): Poly {
-  const N = 16
+  const N = Math.max(16, 4 * Math.ceil((Math.PI * diameter) / 0.5 / 4))
   const out: Poly = []
   for (let k = 0; k < N; k++) {
     const a = (k * 2 * Math.PI) / N

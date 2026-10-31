@@ -118,15 +118,16 @@ function coerceDividers(value: unknown): Divider[] {
 }
 
 // One texture spec. Pitch is clamped against the chosen pattern's own minimum
-// (knurl needs 4mm where the others take 3), the same rule the builder and the
-// Sidebar apply, so a hand-edited file can't ask for sub-MIN_FEATURE bars.
+// (knurl needs 3.5mm where the others take 3), the same rule the builder and
+// the Sidebar apply, so a hand-edited file can't ask for sub-MIN_FEATURE bars.
+// Saves from before the single size knob also carry a `depth`; it is dropped,
+// since depth now follows the pitch.
 function coerceTextureSpec(raw: unknown, d: TextureSpec): TextureSpec {
   const m = (raw && typeof raw === 'object' ? raw : {}) as Partial<TextureSpec>
   const pattern = oneOf(m.pattern, TEXTURE_PATTERNS, d.pattern)
   return {
     pattern,
     mode: oneOf(m.mode, TEXTURE_MODES, d.mode),
-    depth: num(m.depth, d.depth, TEXTURE.MIN_DEPTH, TEXTURE.MAX_TOP_EMBOSS),
     pitch: num(m.pitch, d.pitch, minPitch(pattern), TEXTURE.MAX_PITCH),
     angle: m.angle === 90 ? 90 : 0,
   }
