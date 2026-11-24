@@ -35,25 +35,39 @@ function parseArgs(argv) {
   return o
 }
 
-/** Lay parts out left-to-right in a row centred on the bed, 10 mm apart. */
+/** Lay parts out in rows on the bed, 10 mm apart, wrapping before the bed edge, the whole block centred. */
 export function layoutRow(parts, gap = 10) {
   const boxes = parts.map((p) => p.manifold.boundingBox())
-  const total = boxes.reduce((s, b) => s + (b.max[0] - b.min[0]), 0) + gap * (parts.length - 1)
-  let x = (DIMS.bed - total) / 2
-  return parts.map((p, i) => {
-    const b = boxes[i]
-    const y = (DIMS.bed - (b.max[1] - b.min[1])) / 2
-    const placed = p.manifold.translate([x - b.min[0], y - b.min[1], -b.min[2]])
-    x += b.max[0] - b.min[0] + gap
-    return { ...p, manifold: placed }
+  const size = (b) => [b.max[0] - b.min[0], b.max[1] - b.min[1]]
+  const rows = [[]]
+  let x = 0
+  boxes.forEach((b, i) => {
+    const [w] = size(b)
+    if (rows.at(-1).length && x + w > DIMS.bed) { rows.push([]); x = 0 }
+    rows.at(-1).push(i); x += w + gap
   })
+  const rowW = rows.map((r) => r.reduce((s, i) => s + size(boxes[i])[0], 0) + gap * (r.length - 1))
+  const rowH = rows.map((r) => Math.max(...r.map((i) => size(boxes[i])[1])))
+  const totalH = rowH.reduce((s, h) => s + h, 0) + gap * (rows.length - 1)
+  const placed = new Array(parts.length)
+  let y = (DIMS.bed - totalH) / 2
+  rows.forEach((r, k) => {
+    let cx = (DIMS.bed - rowW[k]) / 2
+    for (const i of r) {
+      const b = boxes[i]
+      placed[i] = { ...parts[i], manifold: parts[i].manifold.translate([cx - b.min[0], y - b.min[1], -b.min[2]]) }
+      cx += size(b)[0] + gap
+    }
+    y += rowH[k] + gap
+  })
+  return placed
 }
 
 function fitTest(outDir) {
   const fit = buildFitTest()
   const parts = [
-    ...fit.bases.map((b) => ({ name: `base corner ${b.notches} notch (interference ${b.interference.toFixed(2)})`, manifold: b.manifold })),
-    { name: 'lid corner', manifold: fit.lid },
+    ...fit.bases.map((b) => ({ name: `mini base ${b.notches} notch (interference ${b.interference.toFixed(2)})`, manifold: b.manifold })),
+    { name: 'mini lid', manifold: fit.lid },
   ]
   const file = join(outDir, 'gift-box-fit-test.3mf')
   writeFileSync(file, write3MF(layoutRow(parts)))

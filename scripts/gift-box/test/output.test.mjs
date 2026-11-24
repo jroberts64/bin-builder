@@ -81,7 +81,7 @@ test('the tulle template is true-size: mm units, cut line = window + 8', () => {
 test('the README carries everything needed to print by hand', () => {
   const r = readme({ interference: 0.1, pause: pauseLayer(1.16) })
   for (const s of ['White Marble', 'Mistletoe Green', 'Silk+ Gold', 'Rosewood', 'layer 10', '1.28', '1.16', 'glue stick', '1.75', 'Textured PEI', 'Sync', 'notch',
-    'Top shell layers', 'Bottom shell layers', 'Wall loops', 'Change Filament', 'AMS slot 1', 'lifts 10 mm', 'strips']) {
+    'Top shell layers', 'Bottom shell layers', 'Wall loops', 'Change Filament', 'AMS slot 1', 'lifts 10 mm', 'mini box', 'a touch firm']) {
     assert.ok(r.includes(s), `README must mention "${s}"`)
   }
   assert.ok(!/sit on the dashed line/.test(r), 'the dashed line is on the paper, not the tulle')

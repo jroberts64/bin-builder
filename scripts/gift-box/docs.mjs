@@ -63,17 +63,19 @@ IF THE LID OPENS WITHOUT ITS SETTINGS
   Pause: see below.
 
 ORDER
-  1. Fit test: gift-box-fit-test.3mf, White Marble, 0.20mm Standard. Four 20 mm
-     strips cut straight across the real box: three base strips and one lid
-     strip. The base strips carry 1, 2 or 3 notches on the bottom edge = 0.05 /
-     0.10 / 0.15 mm of grip. Press the lid strip down over each base strip: pick
-     the one that holds when you turn it upside down but lifts off with a
-     gentle pull. (The fit comes from the sides, not the layer height, so the
-     faster 0.20 preset is fine for the test.)
+  1. Fit test: gift-box-fit-test.3mf, White Marble, 0.20mm Standard. A mini box
+     (80 x 60 mm inside) with exactly the real box's walls, collar, gap, skirt
+     and ribs: three mini bases (open frames, no floor) and one mini lid (a rim,
+     no top). The bases carry 1, 2 or 3
+     notches on the bottom edge = 0.05 / 0.10 / 0.15 mm of grip. Press the lid
+     onto each base. The mini box's short walls are stiffer than the real
+     box's, so it feels a little tighter than the real one will: pick the one
+     that feels right or a touch firm, not the loosest that holds. (The fit
+     comes from the sides, not the layer height, so 0.20 is fine for the test.)
   2. Base.                                 about 5 h 55 m, 147 g White Marble
   3. Lid — with the tulle pause (below).   about 3 h 50 m, 65 g Marble + 6 g Green + 8 g Gold (mostly purge)
   4. Frame.                                about 55 m, 15 g Rosewood
-  (Bambu Studio estimates on 0.12mm High Quality; the fit test is about 47 m, 27 g.)
+  (Bambu Studio estimates on 0.12mm High Quality; the fit test is about 56 m, 39 g.)
 
 THE LID AND THE TULLE PAUSE
   The lid prints face-down: its top is the first layers on the plate.

@@ -1,46 +1,41 @@
-// Fit test: three 20 mm strips cut straight across the real box, through one
-// pair of production ribs, plus the matching strip of the real lid.
+// Fit test: the same box, made small.
 //
-// It has to be a strip across the box, not a corner: grip comes from the two
-// opposite skirt walls being pushed apart by ribs on opposite collar faces and
-// pulling back through the plate. A corner has nothing opposite, so the lid
-// piece just slides away from the rib and every interference feels the same.
+// Grip is set by the cross-section where lid meets base — wall, collar, 0.2
+// clearance, skirt, rib profile — and none of that depends on the footprint or
+// height. So the fit test is a real box and lid at 80 × 60 inside, sharing that
+// cross-section exactly (makeDims fixes everything but the inside size), with
+// one rib in the middle of each face. Everything that doesn't touch the fit is
+// left off to keep it small: the bases are open frames (no floor) standing only
+// 3.2 below the shoulder, and the lid keeps a 10 mm rim of top plate. Three
+// bases at 0.05 / 0.10 / 0.15 mm of interference, labelled by 1 / 2 / 3 notches
+// in the bottom outer edge, and one lid to try on each.
 //
-// Each base strip is the production base (same collar, same 0.2 clearance, the
-// two long-face ribs at x = +¼ run) at one of the three interferences, cut
-// below the shoulder and held together by a bar across the bottom. It is
-// labelled by 1 / 2 / 3 notches in the bottom outer edge.
+// A small box's walls are stiffer than the real one's 150 mm runs, so it feels a
+// little tighter at the same setting; the README says to pick accordingly.
+// (A first version cut a strip across the real box; the lid's window split that
+// strip in two, so nothing squeezed. Every part here is one piece — tested.)
 
 import { M } from './kernel.mjs'
-import { DIMS } from './dims.mjs'
+import { makeDims, DIMS } from './dims.mjs'
 import { buildBase, ribPositions } from './base.mjs'
 import { buildLidShell, lidToAssembled } from './lid.mjs'
 
-const WIDTH = 20
-const STRIP_X = ribPositions().find((q) => q.axis === 'x' && q.sign > 0 && q.along > 0).along // centred on a rib pair
-const X0 = STRIP_X - WIDTH / 2
-const BAR = 2.4 // the bar across the bottom that ties the two walls together
-const Z0 = DIMS.shoulder - 2 - BAR
+// h is chosen so the shoulder sits 3.2 above the bed: h = shoulder + lidH − floor − top
+export const FIT_DIMS = makeDims({ w: 80, d: 60, h: 3.2 + 14 - 2.4 - 2.4 })
 
-const strip = (z0, z1) => M().Manifold.cube([WIDTH, 400, z1 - z0]).translate([X0, -200, z0])
-
-function notches(m, n) {
+function notches(m, n, d) {
   const { Manifold } = M()
   let out = m
-  for (let k = 0; k < n; k++) out = out.subtract(Manifold.cube([2, 2, 2]).translate([X0 + 3 + k * 4, DIMS.outerD / 2 - 1.2, -1]))
+  for (let k = 0; k < n; k++) out = out.subtract(Manifold.cube([2, 2, 2]).translate([-10 + k * 4, d.outerD / 2 - 1.2, -1]))
   return out
 }
 
 export function buildFitTest() {
-  const { Manifold } = M()
-  const bar = Manifold.cube([WIDTH, DIMS.inside.d + 2, BAR]).translate([X0, -(DIMS.inside.d + 2) / 2, Z0])
+  const dims = FIT_DIMS
   const bases = DIMS.rib.fitValues.map((interference, k) => {
-    const base = buildBase({ interference })
-    const assembled = base.body.add(base.ribs).intersect(strip(Z0, DIMS.collarTop + 1)).add(bar)
-    return { interference, notches: k + 1, assembled, manifold: notches(assembled.translate([0, 0, -Z0]), k + 1) }
+    const { body, ribs } = buildBase({ interference, dims, positions: ribPositions(dims, 1), floor: false })
+    return { interference, notches: k + 1, body, ribs, assembled: body.add(ribs), manifold: notches(body.add(ribs), k + 1, dims) }
   })
-  // Lid strip in print pose: cut in assembled space, then flip back to face-down.
-  const lidAssembled = lidToAssembled(buildLidShell()).intersect(strip(DIMS.shoulder - 1, DIMS.topZ + 1))
-  const lid = lidAssembled.rotate([180, 0, 0]).translate([0, 0, DIMS.topZ])
-  return { bases, lid, lidAssembled }
+  const lid = buildLidShell({ dims, window: false, rim: 10 })
+  return { dims, bases, lid, lidAssembled: lidToAssembled(lid, dims) }
 }
