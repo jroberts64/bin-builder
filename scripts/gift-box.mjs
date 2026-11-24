@@ -12,9 +12,15 @@
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { initKernel, write3MF } from './gift-box/kernel.mjs'
+import { initKernel, write3MF, toSTL } from './gift-box/kernel.mjs'
 import { DIMS } from './gift-box/dims.mjs'
 import { buildFitTest } from './gift-box/fittest.mjs'
+import { buildBase } from './gift-box/base.mjs'
+import { buildLidShell } from './gift-box/lid.mjs'
+import { buildWindowParts } from './gift-box/vine.mjs'
+import { buildFrame } from './gift-box/frame.mjs'
+import { writeBambuLid, pauseLayer } from './gift-box/bambu3mf.mjs'
+import { tulleTemplateSVG, readme } from './gift-box/docs.mjs'
 
 function parseArgs(argv) {
   const [cmd, ...rest] = argv
@@ -54,6 +60,44 @@ function fitTest(outDir) {
   return file
 }
 
+/** --interference: a number in 0–max, defaulting (and saying so) to the spec's 0.10. */
+export function parseInterference(raw) {
+  const max = DIMS.rib.maxInterference
+  if (raw === undefined) return { value: DIMS.rib.defaultInterference, defaulted: true }
+  const v = Number(raw)
+  if (!Number.isFinite(v) || v < 0 || v > max) throw new Error(`--interference must be a number from 0 to ${max} mm (got "${raw}")`)
+  return { value: v, defaulted: false }
+}
+
+function build(outDir, interference) {
+  const base = buildBase({ interference })
+  const baseM = base.body.add(base.ribs)
+  const [basePlaced] = layoutRow([{ name: 'gift box base', manifold: baseM }])
+  writeFileSync(join(outDir, 'gift-box-base.3mf'), write3MF([basePlaced]))
+  writeFileSync(join(outDir, 'gift-box-base.stl'), toSTL([basePlaced.manifold]))
+
+  const w = buildWindowParts()
+  const pause = pauseLayer(DIMS.tullePlane)
+  writeFileSync(join(outDir, 'gift-box-lid.3mf'), writeBambuLid({
+    pause,
+    parts: [
+      { name: 'lid body + petals (White Marble)', manifold: buildLidShell().add(w.petals), extruder: 1 },
+      { name: 'vine (Mistletoe Green)', manifold: w.vine, extruder: 2 },
+      { name: 'flower centres (Silk+ Gold)', manifold: w.centres, extruder: 3 },
+    ],
+  }))
+
+  const [framePlaced] = layoutRow([{ name: 'gift box frame', manifold: buildFrame() }])
+  writeFileSync(join(outDir, 'gift-box-frame.3mf'), write3MF([framePlaced]))
+  writeFileSync(join(outDir, 'gift-box-frame.stl'), toSTL([framePlaced.manifold]))
+
+  writeFileSync(join(outDir, 'tulle-template.svg'), tulleTemplateSVG())
+  writeFileSync(join(outDir, 'README.txt'), readme({
+    interference, pause,
+    sliceNotes: 'Checked: Bambu Studio 2.09 slices this lid with the pause at the start of layer ' + pause.nextLayer + '.',
+  }))
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   const outDir = args.out ?? join(homedir(), 'Downloads', 'gift-box')
@@ -63,6 +107,13 @@ async function main() {
     case 'fit-test':
       console.log(`wrote ${fitTest(outDir)}`)
       break
+    case 'build': {
+      const { value, defaulted } = parseInterference(args.interference)
+      console.log(`interference ${value.toFixed(2)} mm${defaulted ? ' (default — run the fit test and pass --interference to change it)' : ''}`)
+      build(outDir, value)
+      console.log(`wrote base, lid, frame, tulle template and README to ${outDir}`)
+      break
+    }
     default:
       throw new Error('usage: gift-box.mjs fit-test | build [--interference 0.10] [--out DIR]')
   }

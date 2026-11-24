@@ -41,7 +41,8 @@ FILES
 SETTINGS
   Process: 0.12mm High Quality @BBL P2S, first layer 0.2 mm. 0.4 mm nozzle only
   (Bambu does not support PLA Marble or PLA Wood on the 0.2 mm nozzle).
-  Base and frame: 4 walls, seam at the back, no supports. Either plate.
+  Base: 8 walls (the 3.2 mm walls are then solid perimeters), seam at the back,
+  no supports. Frame: 4 walls. Either plate for both.
   Lid: Textured PEI plate (it gives the top its stone finish). The lid file
   already carries its settings (0.12 layers, 0.2 first layer, a solid plate,
   4 walls) — keep them when Bambu Studio asks. Press "Sync" in the filament
@@ -51,9 +52,10 @@ ORDER
   1. Fit test (if you haven't): gift-box-fit-test.3mf, 0.20mm Standard. The base
      corners carry 1, 2 or 3 notches on the bottom edge = 0.05 / 0.10 / 0.15 mm
      of grip. Pick the one that holds when tipped but lifts with a gentle pull.
-  2. Base.
-  3. Lid — with the tulle pause (below).
-  4. Frame.
+  2. Base.                                 about 5 h 55 m, 147 g White Marble
+  3. Lid — with the tulle pause (below).   about 3 h 50 m, 65 g Marble + 6 g Green + 8 g Gold (mostly purge)
+  4. Frame.                                about 55 m, 15 g Rosewood
+  (Bambu Studio estimates on 0.12mm High Quality; the fit test is about 21 m, 10 g.)
 
 THE LID AND THE TULLE PAUSE
   The lid prints face-down: its top is the first layers on the plate.
