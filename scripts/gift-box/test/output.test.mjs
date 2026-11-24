@@ -50,11 +50,16 @@ test('one object, three parts on extruders 1 / 2 / 3', () => {
   assert.equal((model.match(/<component /g) || []).length, 3)
 })
 
-test('the pause is stored on the layer after the tulle plane, as a Bambu pause', () => {
+test('the pause is stored on the layer after the tulle plane, lifting and parking the head first', () => {
   const xml = unz('Metadata/custom_gcode_per_layer.xml')
   assert.match(xml, /top_z="1\.28"/)
-  assert.match(xml, /type="1"/)
-  assert.match(xml, /gcode="M400 U1"/)
+  const gcode = xml.match(/gcode="([^"]*)"/)[1].replace(/&#10;/g, '\n')
+  const lines = gcode.split('\n')
+  const lift = lines.findIndex((l) => /^G1 Z/.test(l)), park = lines.findIndex((l) => /^G1 X[\d.]+ Y[\d.]+/.test(l)), pause = lines.indexOf('M400 U1')
+  assert.ok(lines.includes('G91') && lift > lines.indexOf('G91'), 'relative Z lift')
+  assert.ok(lift >= 0 && park > lift && pause > park, `lift → park → pause, got ${JSON.stringify(lines)}`)
+  const y = +gcode.match(/G1 X[\d.]+ Y([\d.]+)/)[1]
+  assert.ok(y > 128 + 131.4 / 2 + 20 && y <= 256, `park clear of the lid's back edge: Y ${y}`)
 })
 
 test('the embedded settings are P2S 0.4, 0.12 layers on a 0.2 first layer, textured plate', () => {
@@ -75,7 +80,9 @@ test('the tulle template is true-size: mm units, cut line = window + 8', () => {
 
 test('the README carries everything needed to print by hand', () => {
   const r = readme({ interference: 0.1, pause: pauseLayer(1.16) })
-  for (const s of ['White Marble', 'Mistletoe Green', 'Silk+ Gold', 'Rosewood', 'layer 10', '1.28', '1.16', 'glue stick', '1.75', 'Textured PEI', 'Sync', 'notch']) {
+  for (const s of ['White Marble', 'Mistletoe Green', 'Silk+ Gold', 'Rosewood', 'layer 10', '1.28', '1.16', 'glue stick', '1.75', 'Textured PEI', 'Sync', 'notch',
+    'Top shell layers', 'Bottom shell layers', 'Wall loops', 'Change Filament', 'AMS slot 1', 'lifts 10 mm', 'strips']) {
     assert.ok(r.includes(s), `README must mention "${s}"`)
   }
+  assert.ok(!/sit on the dashed line/.test(r), 'the dashed line is on the paper, not the tulle')
 })

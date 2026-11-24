@@ -1,8 +1,8 @@
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
-import { initKernel, roundedRect, prism, edgeCheck, overlapVolume } from '../kernel.mjs'
+import { initKernel, roundedRect, prism, edgeCheck, overlapVolume, M } from '../kernel.mjs'
 import { DIMS } from '../dims.mjs'
-import { buildBase, ribSegmentArea } from '../base.mjs'
+import { buildBase, ribSegmentArea, ribAt, collarW, collarD } from '../base.mjs'
 import { buildLidShell, lidToAssembled } from '../lid.mjs'
 import { buildFitTest } from '../fittest.mjs'
 
@@ -72,9 +72,32 @@ test('fit-test pieces: overlap rises with the labelled interference', () => {
   assert.ok(v[0] > 0 && v[0] < v[1] && v[1] < v[2], `overlaps ${v}`)
   for (const m of [...fit.bases.map(b => b.manifold), fit.lid]) {
     const bb = m.boundingBox()
-    assert.ok(bb.max[0] - bb.min[0] <= 60 && bb.max[1] - bb.min[1] <= 60, 'piece ≤ 60 × 60')
     assert.ok(Math.abs(bb.min[2]) < 1e-6, 'piece sits on z = 0')
+    assert.ok(bb.max[0] - bb.min[0] <= 21 && bb.max[1] - bb.min[1] <= DIMS.outerD + 0.01, 'a strip across the box')
   }
+})
+
+test('every fit-test base strip grips from both sides: a rib on each long collar face', () => {
+  for (const b of fit.bases) {
+    const { Manifold } = M()
+    const beyond = (sign) => Manifold.cube([400, 10, 100]).translate([-200, sign > 0 ? collarD / 2 + 1e-3 : -collarD / 2 - 10 - 1e-3, 0])
+    assert.ok(b.assembled.intersect(beyond(1)).volume() > 0, `${b.interference}: rib on +Y face`)
+    assert.ok(b.assembled.intersect(beyond(-1)).volume() > 0, `${b.interference}: rib on −Y face`)
+  }
+})
+
+test('the fit-test lid strip has a skirt at both ends, so the ribs push against each other', () => {
+  const { Manifold } = M()
+  const half = (sign) => Manifold.cube([400, 70, 100]).translate([-200, sign > 0 ? 0 : -70, 0])
+  const bandZ = Manifold.cube([400, 400, DIMS.rib.z1 - DIMS.rib.z0]).translate([-200, -200, DIMS.rib.z0])
+  for (const sign of [1, -1]) assert.ok(fit.lidAssembled.intersect(half(sign)).intersect(bandZ).volume() > 0)
+})
+
+test('ribAt places a rib at the requested coordinate on every face', () => {
+  const c = (m) => { const bb = m.boundingBox(); return [(bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2] }
+  const [x1, y1] = c(ribAt('y', 1, 20, 0.1)); assert.ok(Math.abs(y1 - 20) < 0.01 && x1 > collarW / 2 - 1, `+X face rib at y ${y1}`)
+  const [x2, y2] = c(ribAt('y', -1, 20, 0.1)); assert.ok(Math.abs(y2 - 20) < 0.01 && x2 < -collarW / 2 + 1, `−X face rib at y ${y2}`)
+  const [x3, y3] = c(ribAt('x', -1, 30, 0.1)); assert.ok(Math.abs(x3 - 30) < 0.01 && y3 < -collarD / 2 + 1, `−Y face rib at x ${x3}`)
 })
 
 test('fit-test base pieces carry 1, 2 and 3 label notches', () => {

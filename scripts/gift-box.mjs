@@ -94,7 +94,7 @@ function build(outDir, interference) {
   writeFileSync(join(outDir, 'tulle-template.svg'), tulleTemplateSVG())
   writeFileSync(join(outDir, 'README.txt'), readme({
     interference, pause,
-    sliceNotes: 'Checked: Bambu Studio 2.09 slices this lid with the pause at the start of layer ' + pause.nextLayer + '.',
+    sliceNotes: 'Checked: Bambu Studio 2.09 slices this lid with the lift, park and pause at the start of layer ' + pause.nextLayer + ', before anything is printed on it.',
   }))
 }
 

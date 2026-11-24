@@ -5,8 +5,9 @@
 // The layout copies what Bambu Studio itself writes (checked against a real
 // P2S tulle project): the object is a <components> wrapper whose parts live in
 // 3D/Objects/object_1.model (3MF production extension), per-part extruders in
-// Metadata/model_settings.config, the pause in custom_gcode_per_layer.xml as
-// type="1" / "M400 U1".
+// Metadata/model_settings.config, the pause in custom_gcode_per_layer.xml
+// (Bambu's own tulle project uses type="1" / "M400 U1"; ours is a type 4 custom
+// entry that parks the head first — see PAUSE_GCODE).
 
 import { readFileSync } from 'node:fs'
 import { zipStore, meshXml, escapeXml, CONTENT_TYPES, RELS } from './kernel.mjs'
@@ -16,6 +17,16 @@ const NS = 'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xm
 const APP = '<metadata name="Application">BambuStudio-02.09.01.70</metadata><metadata name="BambuStudio:3mfVersion">1</metadata>'
 const IDENTITY = '1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1'
 const round4 = (x) => Math.round(x * 1e4) / 1e4
+
+/**
+ * The tulle pause. Bambu's plain pause (type 1, M400 U1) leaves the hot nozzle
+ * resting on the print — here, in the middle of the window on a flower — while
+ * the user slides the tulle in. So it is a custom entry (type 4) that lifts
+ * 10 mm and parks the head at the back centre first, clear of the lid's back
+ * edge (y = 128 + 65.7). Safe to resume from: the slicer's moves after a layer's
+ * custom G-code are absolute (lift, travel, drop to the layer height).
+ */
+export const PAUSE_GCODE = ['G91', 'G1 Z10 F900', 'G90', `G1 X${DIMS.bed / 2} Y250 F9000`, 'M400 U1']
 
 /**
  * The layer whose top is the tulle plane z (1-based, as Bambu's slider counts),
@@ -75,7 +86,7 @@ export function writeBambuLid({ parts, pause, name = 'gift-box-lid' }) {
   if (pause) {
     entries.push({
       name: 'Metadata/custom_gcode_per_layer.xml',
-      data: `<?xml version="1.0" encoding="utf-8"?>\n<custom_gcodes_per_layer>\n<plate>\n<plate_info id="1"/>\n<layer top_z="${pause.nextTop}" type="1" extruder="1" color="" extra="" gcode="M400 U1"/>\n<mode value="MultiAsSingle"/>\n</plate>\n</custom_gcodes_per_layer>\n`,
+      data: `<?xml version="1.0" encoding="utf-8"?>\n<custom_gcodes_per_layer>\n<plate>\n<plate_info id="1"/>\n<layer top_z="${pause.nextTop}" type="4" extruder="1" color="" extra="${PAUSE_GCODE.join('&#10;')}" gcode="${PAUSE_GCODE.join('&#10;')}"/>\n<mode value="MultiAsSingle"/>\n</plate>\n</custom_gcodes_per_layer>\n`,
     })
   }
   return zipStore(entries)

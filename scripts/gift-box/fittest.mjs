@@ -1,48 +1,46 @@
-// Fit test: the box's front-right corner, cut out of the real base and lid.
+// Fit test: three 20 mm strips cut straight across the real box, through one
+// pair of production ribs, plus the matching strip of the real lid.
 //
-// Three base corners, each with one rib per face at a different interference
-// (labelled by 1 / 2 / 3 notches in the bottom edge), and one lid corner. The
-// geometry is identical to the full box at that interference — clearance 0.2,
-// same collar, same skirt — so the grip the user feels is the grip they get.
+// It has to be a strip across the box, not a corner: grip comes from the two
+// opposite skirt walls being pushed apart by ribs on opposite collar faces and
+// pulling back through the plate. A corner has nothing opposite, so the lid
+// piece just slides away from the rib and every interference feels the same.
+//
+// Each base strip is the production base (same collar, same 0.2 clearance, the
+// two long-face ribs at x = +¼ run) at one of the three interferences, cut
+// below the shoulder and held together by a bar across the bottom. It is
+// labelled by 1 / 2 / 3 notches in the bottom outer edge.
 
-import { M, overlapVolume } from './kernel.mjs'
+import { M } from './kernel.mjs'
 import { DIMS } from './dims.mjs'
-import { baseBody, ribAt } from './base.mjs'
+import { buildBase, ribPositions } from './base.mjs'
 import { buildLidShell, lidToAssembled } from './lid.mjs'
 
-// Corner window (assembled coordinates): CLIP × CLIP around the +X/+Y corner.
-// Kept small because the fit test has to be a quick print (spec: 15–20 min).
-const CLIP = 36
-const X0 = DIMS.outerW / 2 - CLIP + 1, Y0 = DIMS.outerD / 2 - CLIP + 1
-const clipBox = (z0, z1) => M().Manifold.cube([CLIP, CLIP, z1 - z0]).translate([X0, Y0, z0])
-// One rib per face, inside the clip window, clear of the corner radius (which starts 10 in from the corner).
-const TEST_RIBS = [{ axis: 'x', sign: 1, along: X0 + 10 }, { axis: 'y', sign: 1, along: Y0 + 10 }]
+const WIDTH = 20
+const STRIP_X = ribPositions().find((q) => q.axis === 'x' && q.sign > 0 && q.along > 0).along // centred on a rib pair
+const X0 = STRIP_X - WIDTH / 2
+const BAR = 2.4 // the bar across the bottom that ties the two walls together
+const Z0 = DIMS.shoulder - 2 - BAR
+
+const strip = (z0, z1) => M().Manifold.cube([WIDTH, 400, z1 - z0]).translate([X0, -200, z0])
 
 function notches(m, n) {
-  // small square bites out of the outer bottom edge of the long wall, 2 mm apart
   const { Manifold } = M()
   let out = m
-  for (let k = 0; k < n; k++) {
-    const x = X0 + 3 + k * 4
-    out = out.subtract(Manifold.cube([2, 2, 2]).translate([x, DIMS.outerD / 2 - 1.2, -1]))
-  }
+  for (let k = 0; k < n; k++) out = out.subtract(Manifold.cube([2, 2, 2]).translate([X0 + 3 + k * 4, DIMS.outerD / 2 - 1.2, -1]))
   return out
 }
 
 export function buildFitTest() {
   const { Manifold } = M()
-  const z0 = DIMS.shoulder - 2
-  const body = baseBody().intersect(clipBox(z0, DIMS.collarTop + 1))
+  const bar = Manifold.cube([WIDTH, DIMS.inside.d + 2, BAR]).translate([X0, -(DIMS.inside.d + 2) / 2, Z0])
   const bases = DIMS.rib.fitValues.map((interference, k) => {
-    const ribs = Manifold.union(TEST_RIBS.map((q) => ribAt(q.axis, q.sign, q.along, interference)))
-    const assembled = body.add(ribs.intersect(clipBox(z0, DIMS.collarTop + 1)))
-    const printed = notches(assembled.translate([0, 0, -z0]), k + 1)
-    return { interference, notches: k + 1, assembled, manifold: printed }
+    const base = buildBase({ interference })
+    const assembled = base.body.add(base.ribs).intersect(strip(Z0, DIMS.collarTop + 1)).add(bar)
+    return { interference, notches: k + 1, assembled, manifold: notches(assembled.translate([0, 0, -Z0]), k + 1) }
   })
-  // Lid corner in print pose: clip in assembled space, then flip back to face-down.
-  const lidAssembled = lidToAssembled(buildLidShell()).intersect(clipBox(DIMS.shoulder - 1, DIMS.topZ + 1))
+  // Lid strip in print pose: cut in assembled space, then flip back to face-down.
+  const lidAssembled = lidToAssembled(buildLidShell()).intersect(strip(DIMS.shoulder - 1, DIMS.topZ + 1))
   const lid = lidAssembled.rotate([180, 0, 0]).translate([0, 0, DIMS.topZ])
   return { bases, lid, lidAssembled }
 }
-
-export { overlapVolume }

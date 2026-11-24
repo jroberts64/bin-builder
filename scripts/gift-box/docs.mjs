@@ -44,29 +44,52 @@ SETTINGS
   Base: 8 walls (the 3.2 mm walls are then solid perimeters), seam at the back,
   no supports. Frame: 4 walls. Either plate for both.
   Lid: Textured PEI plate (it gives the top its stone finish). The lid file
-  already carries its settings (0.12 layers, 0.2 first layer, a solid plate,
-  4 walls) — keep them when Bambu Studio asks. Press "Sync" in the filament
-  panel so slots 1-3 pick up your real AMS spools.
+  already carries its settings — keep them when Bambu Studio asks. Load the
+  spools so the order matches the parts: White Marble in AMS slot 1, Mistletoe
+  Green in AMS slot 2, Silk+ Gold in AMS slot 3. Then press "Sync" in the
+  filament panel so slots 1-3 pick up their real profiles.
+  On first open, check the Process panel shows Top shell layers 12, Bottom shell
+  layers 12 and Wall loops 4. If not, follow the next section.
+
+IF THE LID OPENS WITHOUT ITS SETTINGS
+  The plate around the tulle must be solid plastic, or the tulle is only held by
+  sparse infill. Set these by hand:
+    - Process: 0.12mm High Quality @BBL P2S, Initial layer height 0.2.
+    - Strength: Top shell layers 12, Bottom shell layers 12, Wall loops 4.
+    - Seam position: Back. Plate type: Textured PEI.
+    - Prime tower on (it is by default with more than one filament).
+  Filaments per part: in the Objects list expand gift-box-lid, right-click each
+  part -> Change Filament: body + petals -> 1, vine -> 2, flower centres -> 3.
+  Pause: see below.
 
 ORDER
-  1. Fit test (if you haven't): gift-box-fit-test.3mf, 0.20mm Standard. The base
-     corners carry 1, 2 or 3 notches on the bottom edge = 0.05 / 0.10 / 0.15 mm
-     of grip. Pick the one that holds when tipped but lifts with a gentle pull.
+  1. Fit test: gift-box-fit-test.3mf, White Marble, 0.20mm Standard. Four 20 mm
+     strips cut straight across the real box: three base strips and one lid
+     strip. The base strips carry 1, 2 or 3 notches on the bottom edge = 0.05 /
+     0.10 / 0.15 mm of grip. Press the lid strip down over each base strip: pick
+     the one that holds when you turn it upside down but lifts off with a
+     gentle pull. (The fit comes from the sides, not the layer height, so the
+     faster 0.20 preset is fine for the test.)
   2. Base.                                 about 5 h 55 m, 147 g White Marble
   3. Lid — with the tulle pause (below).   about 3 h 50 m, 65 g Marble + 6 g Green + 8 g Gold (mostly purge)
   4. Frame.                                about 55 m, 15 g Rosewood
-  (Bambu Studio estimates on 0.12mm High Quality; the fit test is about 21 m, 10 g.)
+  (Bambu Studio estimates on 0.12mm High Quality; the fit test is about 47 m, 27 g.)
 
 THE LID AND THE TULLE PAUSE
   The lid prints face-down: its top is the first layers on the plate.
-  The pause is already in the file: Bambu Studio's layer slider shows it on
-  layer ${pause.nextLayer} (${pause.nextTop} mm), i.e. after layer ${pause.layer} finishes at the tulle plane, ${pause.top} mm.
-  If it is missing, right-click the slider on layer ${pause.nextLayer} (${pause.nextTop} mm) -> Add Pause.
+  The pause is already in the file: Bambu Studio's layer slider shows a custom
+  G-code marker on layer ${pause.nextLayer} (${pause.nextTop} mm), i.e. after layer ${pause.layer} finishes at the
+  tulle plane, ${pause.top} mm. When it pauses, the head lifts 10 mm and parks at the
+  back of the plate, out of your way.
+  If the marker is missing, right-click the slider on layer ${pause.nextLayer} (${pause.nextTop} mm) ->
+  Add custom G-code, and paste:  G91 / G1 Z10 F900 / G90 / G1 X128 Y250 F9000 / M400 U1
+  (one per line). A plain Add Pause also works, but leaves the hot nozzle
+  resting on the print, in the middle of the window.
 ${sliceNotes ? `  ${sliceNotes}\n` : ''}
   At the pause:
     - Cut the tulle with the template (an oval 8 mm bigger than the window).
-    - Centre it over the open window. The half-printed vine and flowers are
-      visible through it; the window edge should sit on the dashed line.
+    - Centre it over the open window, so about 8 mm of tulle lies on the
+      printed plate all round. The half-printed vine and flowers show through.
     - Hold it flat and taut with a few dabs of glue stick (the one that came with
       the P2S) on the margin, outside the window. Don't use tape: it would be
       printed over and buried, and it can catch the nozzle.

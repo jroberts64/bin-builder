@@ -37,10 +37,10 @@ export function ribAt(axis, sign, along, interference) {
   const full = Manifold.cylinder(rib.z1 - rib.leadIn - rib.z0, r, r, seg).translate([0, face - (r - p), rib.z0])
   const flushDisc = Manifold.cylinder(0.01, r, r, seg).translate([0, face - r, rib.z1 - 0.01])
   let m = Manifold.hull([full, flushDisc])
-  // place: built on the +Y face at x = 0; move along, then turn to the requested face
-  m = m.translate([along, 0, 0])
-  if (axis === 'x') return sign > 0 ? m : m.rotate([0, 0, 180])
-  return m.rotate([0, 0, sign > 0 ? -90 : 90])
+  // Built on the +Y face at x = 0: turn it to the requested face first, then slide it
+  // along that face's own world axis, so `along` is a world x (long faces) or y (short faces).
+  if (axis === 'x') return (sign > 0 ? m : m.rotate([0, 0, 180])).translate([along, 0, 0])
+  return m.rotate([0, 0, sign > 0 ? -90 : 90]).translate([0, along, 0])
 }
 
 /** The 8 production rib positions: 2 per face at ±¼ of each face's straight run. */
